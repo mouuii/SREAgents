@@ -1,0 +1,21 @@
+{
+  "id": "proj-416685716",
+  "name": "电商平台",
+  "description": "",
+  "createdAt": "2026-02-09T17:52:18.588228",
+  "topology": {
+    "nodes": [
+      {
+        "id": "node-1770630822868",
+        "type": "gateway",
+        "name": "new-gateway",
+        "position": {
+          "x": 525,
+          "y": 285
+        }
+      }
+    ],
+    "edges": []
+  },
+  "agents": []
+}

@@ -75,6 +75,10 @@ AGENTS_DIR.mkdir(exist_ok=True)
 CHAT_HISTORY_DIR = Path(__file__).parent / "chat_history"
 CHAT_HISTORY_DIR.mkdir(exist_ok=True)
 
+# Projects directory
+PROJECTS_DIR = Path(__file__).parent / "projects"
+PROJECTS_DIR.mkdir(exist_ok=True)
+
 
 def parse_skill_file(file_path: Path) -> dict:
     """解析技能 Markdown 文件，提取 frontmatter 和内容"""
@@ -539,6 +543,7 @@ def parse_agent_file(file_path: Path) -> dict:
                 "gradient": frontmatter.get("gradient", "gradient-1"),
                 "model": frontmatter.get("model", "claude-3"),
                 "skills": frontmatter.get("skills", []),
+                "projectId": frontmatter.get("projectId", ""),
                 "createdAt": frontmatter.get("createdAt", ""),
                 "systemPrompt": system_prompt
             }
@@ -551,6 +556,7 @@ def parse_agent_file(file_path: Path) -> dict:
         "gradient": "gradient-1",
         "model": "claude-3",
         "skills": [],
+        "projectId": "",
         "createdAt": "",
         "systemPrompt": content
     }
@@ -567,6 +573,7 @@ def save_agent_file(agent: dict):
         "gradient": agent.get("gradient", "gradient-1"),
         "model": agent.get("model", "claude-3"),
         "skills": agent.get("skills", []),
+        "projectId": agent.get("projectId", ""),
         "createdAt": agent.get("createdAt", ""),
     }
     
@@ -612,6 +619,7 @@ class AgentCreate(BaseModel):
     gradient: str = "gradient-1"
     model: str = "claude-3"
     skills: list[str] = []
+    projectId: str = ""
     createdAt: str = ""
     systemPrompt: str = ""
 
@@ -796,6 +804,123 @@ async def execute_prometheus_skill(params: dict) -> dict:
             else:
                 text = await resp.text()
                 raise Exception(f"Prometheus query failed: {text}")
+
+
+# ==================== Projects API ====================
+
+def get_project_path(project_id: str) -> Path:
+    """获取项目配置文件路径"""
+    return PROJECTS_DIR / f"{project_id}.json"
+
+
+def load_project(project_id: str) -> dict:
+    """加载项目配置"""
+    file_path = get_project_path(project_id)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    return json.loads(file_path.read_text(encoding="utf-8"))
+
+
+def save_project(project: dict):
+    """保存项目配置"""
+    file_path = get_project_path(project["id"])
+    file_path.write_text(json.dumps(project, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+@app.get("/api/projects")
+async def list_projects():
+    """获取所有项目列表"""
+    projects = []
+    for file_path in PROJECTS_DIR.glob("*.json"):
+        try:
+            project = json.loads(file_path.read_text(encoding="utf-8"))
+            # 统计智能体数量
+            project["agentCount"] = len(project.get("agents", []))
+            projects.append(project)
+        except Exception as e:
+            print(f"Error loading project {file_path}: {e}")
+    return {"projects": projects}
+
+
+@app.get("/api/projects/{project_id}")
+async def get_project(project_id: str):
+    """获取单个项目详情"""
+    return load_project(project_id)
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    description: str = ""
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    topology: Optional[dict] = None
+    agents: Optional[list[str]] = None
+
+
+@app.post("/api/projects")
+async def create_project(project: ProjectCreate):
+    """创建新项目"""
+    from datetime import datetime
+    project_id = f"proj-{int(asyncio.get_event_loop().time() * 1000)}"
+    
+    project_data = {
+        "id": project_id,
+        "name": project.name,
+        "description": project.description,
+        "createdAt": datetime.now().isoformat(),
+        "topology": {"nodes": [], "edges": []},
+        "agents": []
+    }
+    
+    save_project(project_data)
+    return {"success": True, "project": project_data}
+
+
+@app.put("/api/projects/{project_id}")
+async def update_project(project_id: str, update: ProjectUpdate):
+    """更新项目"""
+    project = load_project(project_id)
+    
+    if update.name is not None:
+        project["name"] = update.name
+    if update.description is not None:
+        project["description"] = update.description
+    if update.topology is not None:
+        project["topology"] = update.topology
+    if update.agents is not None:
+        project["agents"] = update.agents
+    
+    save_project(project)
+    return {"success": True, "project": project}
+
+
+@app.delete("/api/projects/{project_id}")
+async def delete_project(project_id: str):
+    """删除项目"""
+    file_path = get_project_path(project_id)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Project '{project_id}' not found")
+    file_path.unlink()
+    return {"success": True}
+
+
+@app.get("/api/projects/{project_id}/topology")
+async def get_project_topology(project_id: str):
+    """获取项目的服务拓扑"""
+    project = load_project(project_id)
+    return {"topology": project.get("topology", {"nodes": [], "edges": []})}
+
+
+@app.put("/api/projects/{project_id}/topology")
+async def update_project_topology(project_id: str, topology: dict):
+    """更新项目的服务拓扑"""
+    project = load_project(project_id)
+    project["topology"] = topology
+    save_project(project)
+    return {"success": True}
 
 
 if __name__ == "__main__":

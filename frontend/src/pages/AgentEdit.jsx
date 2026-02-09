@@ -1,18 +1,24 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Save, Trash2, Play, FileText, Settings as SettingsIcon } from 'lucide-react'
+import { ArrowLeft, Plus, Save, Play, FileText, Settings as SettingsIcon } from 'lucide-react'
 import Header from '../components/Layout/Header'
 import SkillCard from '../components/Skill/SkillCard'
 import Modal from '../components/common/Modal'
 import { useAgents, useAgentDispatch, agentsApi } from '../context/AgentContext'
+import { useProjects } from '../context/ProjectContext'
 
 export default function AgentEdit() {
-    const { id } = useParams()
+    const { id, projectId } = useParams()
     const navigate = useNavigate()
     const { agents, skills } = useAgents()
     const dispatch = useAgentDispatch()
+    const { currentProject, projects } = useProjects()
 
-    const isNew = id === 'new'
+    // 从 URL 或 currentProject 获取项目 ID
+    const targetProjectId = projectId || currentProject?.id || ''
+    const targetProject = projects.find(p => p.id === targetProjectId)
+
+    const isNew = id === 'new' || !id
     const existingAgent = agents.find(a => a.id === id)
 
     const [agent, setAgent] = useState(() => {
@@ -26,27 +32,25 @@ export default function AgentEdit() {
                 model: 'qn-plus',
                 systemPrompt: '',
                 skills: [],
+                projectId: targetProjectId,
                 createdAt: new Date().toLocaleDateString('zh-CN')
             }
         }
         return existingAgent || null
     })
 
-    // 当 existingAgent 加载完成后更新 state
-    useEffect(() => {
-        if (!isNew && existingAgent && !agent) {
-            setAgent(existingAgent)
-        }
-    }, [isNew, existingAgent, agent])
-
-    const [activeTab, setActiveTab] = useState('config')
     const [showSkillModal, setShowSkillModal] = useState(false)
 
-    // 加载中状态
-    if (!isNew && !agent) {
+    useEffect(() => {
+        if (!isNew && existingAgent) {
+            setAgent(existingAgent)
+        }
+    }, [isNew, existingAgent])
+
+    if (!agent) {
         return (
             <>
-                <Header title="编辑智能体" />
+                <Header title={isNew ? "创建智能体" : "编辑智能体"} />
                 <div className="page-content">
                     <div className="text-center text-muted">加载中...</div>
                 </div>
@@ -54,32 +58,46 @@ export default function AgentEdit() {
         )
     }
 
-    const agentSkills = agent.skills.map(skillId =>
+    const agentSkills = (agent.skills || []).map(skillId =>
         skills.find(s => s.id === skillId)
     ).filter(Boolean)
 
-    const availableSkills = skills.filter(s => !agent.skills.includes(s.id))
+    const availableSkills = skills.filter(s => !(agent.skills || []).includes(s.id))
 
     const handleSave = async () => {
+        const agentData = { ...agent, projectId: targetProjectId }
         try {
             if (isNew) {
-                const result = await agentsApi.create(agent)
+                const result = await agentsApi.create(agentData)
                 dispatch({ type: 'ADD_AGENT', payload: result.agent })
             } else {
-                const result = await agentsApi.update(agent.id, agent)
+                const result = await agentsApi.update(agentData.id, agentData)
                 dispatch({ type: 'UPDATE_AGENT', payload: result.agent })
             }
-            navigate('/')
+            // 返回项目详情页
+            if (targetProjectId) {
+                navigate(`/projects/${targetProjectId}`)
+            } else {
+                navigate('/')
+            }
         } catch (err) {
             console.error('Failed to save agent:', err)
             alert('保存失败: ' + err.message)
         }
     }
 
+    const handleBack = () => {
+        if (targetProjectId) {
+            navigate(`/projects/${targetProjectId}`)
+        } else {
+            navigate('/')
+        }
+    }
+
     const handleAddSkill = (skill) => {
         setAgent(prev => ({
             ...prev,
-            skills: [...prev.skills, skill.id]
+            skills: [...(prev.skills || []), skill.id]
         }))
         setShowSkillModal(false)
     }
@@ -87,28 +105,30 @@ export default function AgentEdit() {
     const handleRemoveSkill = (skillId) => {
         setAgent(prev => ({
             ...prev,
-            skills: prev.skills.filter(id => id !== skillId)
+            skills: (prev.skills || []).filter(id => id !== skillId)
         }))
     }
 
     return (
         <>
-            <Header title={isNew ? '创建智能体' : '编辑智能体'} />
+            <Header title={isNew ? `创建智能体 - ${targetProject?.name || ''}` : '编辑智能体'} />
             <div className="page-content">
                 {/* Top Bar */}
                 <div className="flex items-center justify-between mb-md">
-                    <button className="btn btn-ghost" onClick={() => navigate('/')}>
+                    <button className="btn btn-ghost" onClick={handleBack}>
                         <ArrowLeft size={18} />
                         返回
                     </button>
                     <div className="flex gap-sm">
-                        <button className="btn btn-secondary" onClick={() => navigate(`/agents/${id}/chat`)}>
-                            <Play size={18} />
-                            预览与调试
-                        </button>
+                        {!isNew && (
+                            <button className="btn btn-secondary" onClick={() => navigate(`/agents/${id}/chat`)}>
+                                <Play size={18} />
+                                预览与调试
+                            </button>
+                        )}
                         <button className="btn btn-primary" onClick={handleSave}>
                             <Save size={18} />
-                            发布
+                            {isNew ? '创建' : '保存'}
                         </button>
                     </div>
                 </div>

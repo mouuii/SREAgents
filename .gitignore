@@ -13,3 +13,6 @@ wheels/
 
 # Node
 node_modules/
+
+# Chat history
+backend/chat_history/
