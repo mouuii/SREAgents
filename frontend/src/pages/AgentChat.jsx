@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Send, Loader } from 'lucide-react'
+import { ArrowLeft, Send, Loader, Trash2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Header from '../components/Layout/Header'
@@ -12,15 +12,67 @@ export default function AgentChat() {
     const { agents, skills } = useAgents()
 
     const agent = agents.find(a => a.id === id)
-    const [messages, setMessages] = useState([
-        {
-            role: 'assistant',
-            content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`
-        }
-    ])
+    const [messages, setMessages] = useState([])
     const [input, setInput] = useState('')
     const [isLoading, setIsLoading] = useState(false)
+    const [historyLoaded, setHistoryLoaded] = useState(false)
     const messagesEndRef = useRef(null)
+
+    // 加载对话历史
+    useEffect(() => {
+        if (!id || !agent) return
+        
+        const loadHistory = async () => {
+            try {
+                const response = await fetch(`/api/chat/history/${id}`)
+                if (response.ok) {
+                    const data = await response.json()
+                    if (data.messages && data.messages.length > 0) {
+                        setMessages(data.messages)
+                    } else {
+                        // 没有历史记录，显示欢迎消息
+                        setMessages([{
+                            role: 'assistant',
+                            content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`
+                        }])
+                    }
+                } else {
+                    setMessages([{
+                        role: 'assistant',
+                        content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`
+                    }])
+                }
+            } catch (error) {
+                console.error('Failed to load chat history:', error)
+                setMessages([{
+                    role: 'assistant',
+                    content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`
+                }])
+            }
+            setHistoryLoaded(true)
+        }
+        
+        loadHistory()
+    }, [id, agent])
+
+    // 保存对话历史
+    useEffect(() => {
+        if (!id || !historyLoaded || messages.length === 0) return
+        
+        const saveHistory = async () => {
+            try {
+                await fetch(`/api/chat/history/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messages })
+                })
+            } catch (error) {
+                console.error('Failed to save chat history:', error)
+            }
+        }
+        
+        saveHistory()
+    }, [id, messages, historyLoaded])
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -114,6 +166,23 @@ export default function AgentChat() {
                         返回编辑
                     </button>
                     <div className="flex items-center gap-sm">
+                        <button 
+                            className="btn btn-ghost" 
+                            onClick={async () => {
+                                if (confirm('确定要清空对话历史吗？')) {
+                                    try {
+                                        await fetch(`/api/chat/history/${id}`, { method: 'DELETE' })
+                                    } catch (e) { /* ignore */ }
+                                    setMessages([{
+                                        role: 'assistant',
+                                        content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`
+                                    }])
+                                }
+                            }}
+                            title="清空对话"
+                        >
+                            <Trash2 size={18} />
+                        </button>
                         <div className={`agent-avatar ${agent.gradient}`} style={{ width: 32, height: 32, fontSize: '1rem' }}>
                             {agent.avatar}
                         </div>

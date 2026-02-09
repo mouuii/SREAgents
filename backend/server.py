@@ -68,6 +68,10 @@ SKILLS_DIR.mkdir(exist_ok=True)
 AGENTS_DIR = Path(__file__).parent / "agents"
 AGENTS_DIR.mkdir(exist_ok=True)
 
+# Chat history directory
+CHAT_HISTORY_DIR = Path(__file__).parent / "chat_history"
+CHAT_HISTORY_DIR.mkdir(exist_ok=True)
+
 
 def parse_skill_file(file_path: Path) -> dict:
     """解析技能 Markdown 文件，提取 frontmatter 和内容"""
@@ -332,6 +336,55 @@ async def delete_agent(agent_id: str):
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
     
     file_path.unlink()
+    return {"success": True}
+
+
+# ==================== Chat History API ====================
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatHistoryUpdate(BaseModel):
+    messages: list[ChatMessage]
+
+
+def get_chat_history_path(agent_id: str) -> Path:
+    """获取对话历史文件路径"""
+    return CHAT_HISTORY_DIR / f"{agent_id}.json"
+
+
+@app.get("/api/chat/history/{agent_id}")
+async def get_chat_history(agent_id: str):
+    """获取指定智能体的对话历史"""
+    file_path = get_chat_history_path(agent_id)
+    if not file_path.exists():
+        return {"messages": []}
+    
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+        return {"messages": data.get("messages", [])}
+    except Exception as e:
+        print(f"Error reading chat history: {e}")
+        return {"messages": []}
+
+
+@app.put("/api/chat/history/{agent_id}")
+async def save_chat_history(agent_id: str, history: ChatHistoryUpdate):
+    """保存对话历史"""
+    file_path = get_chat_history_path(agent_id)
+    data = {"messages": [msg.model_dump() for msg in history.messages]}
+    file_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"success": True}
+
+
+@app.delete("/api/chat/history/{agent_id}")
+async def clear_chat_history(agent_id: str):
+    """清空对话历史"""
+    file_path = get_chat_history_path(agent_id)
+    if file_path.exists():
+        file_path.unlink()
     return {"success": True}
 
 
