@@ -26,6 +26,9 @@ except ImportError:
     query = None
     ClaudeAgentOptions = None
 
+# Import storage manager
+from storage.manager import storage
+
 app = FastAPI(title="OpsAgent Platform API", version="1.0.0")
 
 # CORS for frontend
@@ -59,23 +62,46 @@ async def health():
     return {
         "status": "healthy",
         "claude_sdk_available": query is not None,
-        "env_configured": bool(os.getenv("ANTHROPIC_API_KEY"))
+        "env_configured": bool(os.getenv("ANTHROPIC_API_KEY")),
+        "storage_type": storage.storage_type
     }
 
 
-# Skills directory
+# ==================== Storage Config API ====================
+
+class StorageConfig(BaseModel):
+    type: str = "local"
+    github_token: Optional[str] = None
+    github_owner: Optional[str] = None
+    github_repo: Optional[str] = None
+    github_branch: str = "main"
+
+
+@app.get("/api/storage/config")
+async def get_storage_config():
+    """获取存储配置"""
+    return storage.get_config()
+
+
+@app.put("/api/storage/config")
+async def update_storage_config(config: StorageConfig):
+    """更新存储配置"""
+    success = await storage.configure(config.model_dump())
+    if success:
+        return {"success": True, "config": storage.get_config()}
+    raise HTTPException(status_code=500, detail="Failed to configure storage")
+
+
+# Legacy directories (for backward compatibility)
 SKILLS_DIR = Path(__file__).parent / "skills"
 SKILLS_DIR.mkdir(exist_ok=True)
 
-# Agents directory
 AGENTS_DIR = Path(__file__).parent / "agents"
 AGENTS_DIR.mkdir(exist_ok=True)
 
-# Chat history directory
 CHAT_HISTORY_DIR = Path(__file__).parent / "chat_history"
 CHAT_HISTORY_DIR.mkdir(exist_ok=True)
 
-# Projects directory
 PROJECTS_DIR = Path(__file__).parent / "projects"
 PROJECTS_DIR.mkdir(exist_ok=True)
 

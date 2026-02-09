@@ -7,6 +7,7 @@ import SkillEdit from './pages/SkillEdit'
 import ProjectList from './pages/ProjectList'
 import ProjectDetail from './pages/ProjectDetail'
 import TopologyEditor from './pages/TopologyEditor'
+import Settings from './pages/Settings'
 import { AgentProvider } from './context/AgentContext'
 import { ProjectProvider } from './context/ProjectContext'
 
@@ -28,6 +29,7 @@ function App() {
               <Route path="/skills" element={<SkillList />} />
               <Route path="/skills/new" element={<SkillEdit />} />
               <Route path="/skills/:id" element={<SkillEdit />} />
+              <Route path="/settings" element={<Settings />} />
             </Routes>
           </main>
         </div>
