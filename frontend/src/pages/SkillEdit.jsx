@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Save, FileText, File, Upload, Plus, Trash2 } from 'lucide-react'
+import { ArrowLeft, Save, FileText, File, Plus, Trash2, FolderOpen } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import Header from '../components/Layout/Header'
 import { useAgents, useAgentDispatch, skillsApi } from '../context/AgentContext'
@@ -14,7 +14,6 @@ export default function SkillEdit() {
     const isNew = id === 'new'
     const existingSkill = skills.find(s => s.id === id)
 
-    // Ensure all required fields have default values
     const defaultSkill = {
         id: '',
         name: '',
@@ -28,16 +27,6 @@ export default function SkillEdit() {
 ### Step 1: 描述步骤
 
 根据需求执行相应操作
-
-### Script_Prompt
-
-\`\`\`text
-你是一名专家，请根据以下信息...
-\`\`\`
-
-### Step 2: 执行操作
-
-描述具体的执行步骤
 `,
         config: {},
         documents: []
@@ -45,20 +34,89 @@ export default function SkillEdit() {
 
     const [skill, setSkill] = useState(() => {
         if (existingSkill) {
-            // Merge with defaults to ensure all fields exist
             return { ...defaultSkill, ...existingSkill, documents: existingSkill.documents || [] }
         }
         return defaultSkill
     })
 
-    const [activeTab, setActiveTab] = useState('edit')
-    const [showDocSection, setShowDocSection] = useState(true)
     const [saving, setSaving] = useState(false)
+    
+    // 文件管理状态
+    const [files, setFiles] = useState([])
+    const [activeFile, setActiveFile] = useState(null) // { path, content, isSkillMd }
+    const [fileContent, setFileContent] = useState('')
+    const [showNewFileModal, setShowNewFileModal] = useState(false)
+    const [newFileName, setNewFileName] = useState('')
+
+    // 加载文件列表
+    useEffect(() => {
+        if (!isNew && id) {
+            loadFiles()
+        }
+    }, [id, isNew])
+
+    const loadFiles = async () => {
+        try {
+            const res = await fetch(`/api/skills/${id}/files`)
+            if (res.ok) {
+                const data = await res.json()
+                setFiles(data.files)
+                // 默认选中 SKILL.md
+                const skillMd = data.files.find(f => f.isSkillMd)
+                if (skillMd) {
+                    loadFileContent(skillMd.path, true)
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load files:', err)
+        }
+    }
+
+    const loadFileContent = async (path, isSkillMd = false) => {
+        try {
+            const res = await fetch(`/api/skills/${id}/files/${encodeURIComponent(path)}`)
+            if (res.ok) {
+                const data = await res.json()
+                setActiveFile({ path, isSkillMd })
+                setFileContent(data.content)
+                
+                // 如果是 SKILL.md，同步到 skill.instruction
+                if (isSkillMd) {
+                    // 解析 frontmatter
+                    const content = data.content
+                    if (content.startsWith('---')) {
+                        const parts = content.split('---')
+                        if (parts.length >= 3) {
+                            setSkill(prev => ({ ...prev, instruction: parts.slice(2).join('---').trim() }))
+                        }
+                    } else {
+                        setSkill(prev => ({ ...prev, instruction: content }))
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load file:', err)
+        }
+    }
+
+    const saveCurrentFile = async () => {
+        if (!activeFile) return
+        
+        try {
+            await fetch(`/api/skills/${id}/files/${encodeURIComponent(activeFile.path)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: fileContent })
+            })
+        } catch (err) {
+            console.error('Failed to save file:', err)
+            throw err
+        }
+    }
 
     const handleSave = async () => {
         setSaving(true)
         try {
-            // Generate ID from name if not set
             const skillToSave = {
                 ...skill,
                 id: skill.id || skill.name.toLowerCase().replace(/\s+/g, '-')
@@ -68,6 +126,10 @@ export default function SkillEdit() {
                 await skillsApi.create(skillToSave)
                 dispatch({ type: 'ADD_SKILL', payload: skillToSave })
             } else {
+                // 先保存当前编辑的文件
+                if (activeFile) {
+                    await saveCurrentFile()
+                }
                 await skillsApi.update(id, skillToSave)
                 dispatch({ type: 'UPDATE_SKILL', payload: skillToSave })
             }
@@ -78,6 +140,69 @@ export default function SkillEdit() {
         } finally {
             setSaving(false)
         }
+    }
+
+    const handleCreateFile = async () => {
+        if (!newFileName.trim()) return
+        
+        try {
+            const res = await fetch(`/api/skills/${id}/files?file_path=${encodeURIComponent(newFileName)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: '' })
+            })
+            
+            if (res.ok) {
+                setShowNewFileModal(false)
+                setNewFileName('')
+                await loadFiles()
+                loadFileContent(newFileName)
+            } else {
+                const data = await res.json()
+                alert(data.detail || '创建失败')
+            }
+        } catch (err) {
+            alert('创建失败: ' + err.message)
+        }
+    }
+
+    const handleDeleteFile = async (path) => {
+        if (!confirm(`确定要删除 ${path} 吗？`)) return
+        
+        try {
+            const res = await fetch(`/api/skills/${id}/files/${encodeURIComponent(path)}`, {
+                method: 'DELETE'
+            })
+            
+            if (res.ok) {
+                await loadFiles()
+                if (activeFile?.path === path) {
+                    setActiveFile(null)
+                    setFileContent('')
+                }
+            } else {
+                const data = await res.json()
+                alert(data.detail || '删除失败')
+            }
+        } catch (err) {
+            alert('删除失败: ' + err.message)
+        }
+    }
+
+    const getFileLanguage = (filename) => {
+        const ext = filename.split('.').pop()?.toLowerCase()
+        const langMap = {
+            'md': 'markdown',
+            'json': 'json',
+            'yaml': 'yaml',
+            'yml': 'yaml',
+            'js': 'javascript',
+            'ts': 'typescript',
+            'py': 'python',
+            'sh': 'shell',
+            'txt': 'plaintext'
+        }
+        return langMap[ext] || 'plaintext'
     }
 
     return (
@@ -94,121 +219,220 @@ export default function SkillEdit() {
                         <button className="btn btn-secondary" onClick={() => navigate(-1)}>
                             取消
                         </button>
-                        <button className="btn btn-primary" onClick={handleSave}>
+                        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
                             <Save size={18} />
-                            保存
+                            {saving ? '保存中...' : '保存'}
                         </button>
                     </div>
                 </div>
 
-                {/* Skill Form */}
-                <div className="card" style={{ maxWidth: '900px' }}>
-                    <div className="form-group">
-                        <label className="form-label required">技能名称</label>
-                        <input
-                            type="text"
-                            className="form-input"
-                            placeholder="输入技能名称（如 document-parser）"
-                            value={skill.name}
-                            onChange={(e) => setSkill(prev => ({ ...prev, name: e.target.value }))}
-                        />
-                        <div className="form-hint">最多64个字符，只允许小写字母、数字和连字符</div>
-                    </div>
-
-                    <div className="form-group">
-                        <label className="form-label">技能描述</label>
-                        <input
-                            type="text"
-                            className="form-input"
-                            placeholder="简短描述技能的功能，用于 Discovery 阶段展示给 AI"
-                            value={skill.description}
-                            onChange={(e) => setSkill(prev => ({ ...prev, description: e.target.value }))}
-                        />
-                    </div>
-
-                    <div className="form-group">
-                        <label className="form-label required">技能指令</label>
-                        <div className="form-hint mb-md">完整的技能指令（SKILL.md 内容），当 AI 激活技能时会获取这些指令</div>
-
-                        <div className="editor-container">
-                            <div className="editor-header">
-                                <div className="editor-tabs">
-                                    <button
-                                        className={`editor-tab ${activeTab === 'edit' ? 'active' : ''}`}
-                                        onClick={() => setActiveTab('edit')}
-                                    >
-                                        编辑
-                                    </button>
-                                    <button
-                                        className={`editor-tab ${activeTab === 'preview' ? 'active' : ''}`}
-                                        onClick={() => setActiveTab('preview')}
-                                    >
-                                        预览
-                                    </button>
-                                </div>
-                            </div>
-                            <Editor
-                                height="400px"
-                                defaultLanguage="markdown"
-                                theme="vs-dark"
-                                value={skill.instruction}
-                                onChange={(value) => setSkill(prev => ({ ...prev, instruction: value || '' }))}
-                                options={{
-                                    minimap: { enabled: false },
-                                    fontSize: 14,
-                                    lineNumbers: 'on',
-                                    wordWrap: 'on',
-                                    padding: { top: 16 }
-                                }}
+                {/* Main Content */}
+                <div className="skill-edit-layout">
+                    {/* Left: Basic Info */}
+                    <div className="card skill-info-card">
+                        <h3 className="card-title">基本信息</h3>
+                        
+                        <div className="form-group">
+                            <label className="form-label required">技能名称</label>
+                            <input
+                                type="text"
+                                className="form-input"
+                                placeholder="如 prometheus"
+                                value={skill.name}
+                                onChange={(e) => setSkill(prev => ({ ...prev, name: e.target.value }))}
                             />
                         </div>
-                    </div>
 
-                    <div className="form-group">
-                        <div
-                            className="flex items-center gap-sm"
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => setShowDocSection(!showDocSection)}
-                        >
-                            <span style={{ transform: showDocSection ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
-                            <label className="form-label" style={{ marginBottom: 0, cursor: 'pointer' }}>引用文档</label>
+                        <div className="form-group">
+                            <label className="form-label">描述</label>
+                            <input
+                                type="text"
+                                className="form-input"
+                                placeholder="简短描述技能功能"
+                                value={skill.description}
+                                onChange={(e) => setSkill(prev => ({ ...prev, description: e.target.value }))}
+                            />
                         </div>
 
-                        {showDocSection && (
-                            <div className="mt-md">
-                                {skill.documents.length > 0 ? (
-                                    <div className="document-list">
-                                        {skill.documents.map(doc => (
-                                            <div key={doc.id} className="document-item">
-                                                <FileText size={16} className="document-icon" />
-                                                <span className="document-name">{doc.name}</span>
-                                                <span className="document-tag">{doc.type}</span>
-                                                <button className="btn btn-sm btn-ghost">
-                                                    <Trash2 size={14} />
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="text-muted text-sm mb-md">暂无引用文档，点击下方按钮上传</div>
-                                )}
-
-                                <div className="flex gap-sm mt-md">
-                                    <button className="btn btn-secondary">
-                                        <Plus size={16} />
-                                        创建空白Markdown文档
-                                    </button>
-                                    <button className="btn btn-secondary">
-                                        <Upload size={16} />
-                                        上传引用文档
+                        {/* File List */}
+                        {!isNew && (
+                            <div className="form-group">
+                                <div className="flex items-center justify-between mb-sm">
+                                    <label className="form-label" style={{ marginBottom: 0 }}>
+                                        <FolderOpen size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+                                        文件列表
+                                    </label>
+                                    <button 
+                                        className="btn btn-sm btn-ghost"
+                                        onClick={() => setShowNewFileModal(true)}
+                                    >
+                                        <Plus size={14} />
                                     </button>
                                 </div>
-                                <div className="form-hint mt-md">支持 PDF、Word、Markdown、HTML、TXT 格式</div>
+                                
+                                <div className="file-list">
+                                    {files.map(file => (
+                                        <div 
+                                            key={file.path}
+                                            className={`file-item ${activeFile?.path === file.path ? 'active' : ''}`}
+                                            onClick={() => loadFileContent(file.path, file.isSkillMd)}
+                                        >
+                                            <FileText size={14} />
+                                            <span className="file-name">{file.path}</span>
+                                            {!file.isSkillMd && (
+                                                <button 
+                                                    className="btn btn-sm btn-ghost file-delete"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        handleDeleteFile(file.path)
+                                                    }}
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {files.length === 0 && (
+                                        <div className="text-muted text-sm">暂无文件</div>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </div>
+
+                    {/* Right: Editor */}
+                    <div className="card skill-editor-card">
+                        <div className="editor-header">
+                            <span className="editor-title">
+                                {activeFile ? activeFile.path : (isNew ? 'SKILL.md' : '选择文件')}
+                            </span>
+                        </div>
+                        <Editor
+                            height="calc(100vh - 280px)"
+                            language={activeFile ? getFileLanguage(activeFile.path) : 'markdown'}
+                            theme="vs-dark"
+                            value={isNew ? skill.instruction : fileContent}
+                            onChange={(value) => {
+                                if (isNew) {
+                                    setSkill(prev => ({ ...prev, instruction: value || '' }))
+                                } else {
+                                    setFileContent(value || '')
+                                }
+                            }}
+                            options={{
+                                minimap: { enabled: false },
+                                fontSize: 14,
+                                lineNumbers: 'on',
+                                wordWrap: 'on',
+                                padding: { top: 16 }
+                            }}
+                        />
+                    </div>
                 </div>
             </div>
+
+            {/* New File Modal */}
+            {showNewFileModal && (
+                <div className="modal-overlay" onClick={() => setShowNewFileModal(false)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+                        <div className="modal-header">
+                            <h3 className="modal-title">新建文件</h3>
+                        </div>
+                        <div className="modal-body">
+                            <div className="form-group">
+                                <label className="form-label">文件名</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    placeholder="如 config.json 或 docs/readme.md"
+                                    value={newFileName}
+                                    onChange={(e) => setNewFileName(e.target.value)}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCreateFile()}
+                                    autoFocus
+                                />
+                            </div>
+                        </div>
+                        <div className="modal-footer">
+                            <button className="btn btn-secondary" onClick={() => setShowNewFileModal(false)}>
+                                取消
+                            </button>
+                            <button className="btn btn-primary" onClick={handleCreateFile}>
+                                创建
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <style>{`
+                .skill-edit-layout {
+                    display: grid;
+                    grid-template-columns: 280px 1fr;
+                    gap: var(--space-lg);
+                    max-width: 1200px;
+                }
+                .skill-info-card {
+                    height: fit-content;
+                }
+                .skill-editor-card {
+                    padding: 0;
+                    overflow: hidden;
+                }
+                .editor-header {
+                    padding: 12px 16px;
+                    border-bottom: 1px solid var(--border-color);
+                    background: var(--bg-secondary);
+                }
+                .editor-title {
+                    font-size: 0.875rem;
+                    color: var(--text-secondary);
+                }
+                .file-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                }
+                .file-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 10px;
+                    border-radius: var(--radius-md);
+                    cursor: pointer;
+                    font-size: 0.875rem;
+                    color: var(--text-secondary);
+                }
+                .file-item:hover {
+                    background: var(--bg-tertiary);
+                }
+                .file-item.active {
+                    background: var(--primary-alpha);
+                    color: var(--primary);
+                }
+                .file-name {
+                    flex: 1;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .file-delete {
+                    opacity: 0;
+                    padding: 2px;
+                }
+                .file-item:hover .file-delete {
+                    opacity: 1;
+                }
+                .card-title {
+                    font-size: 1rem;
+                    font-weight: 600;
+                    margin-bottom: var(--space-md);
+                }
+                @media (max-width: 768px) {
+                    .skill-edit-layout {
+                        grid-template-columns: 1fr;
+                    }
+                }
+            `}</style>
         </>
     )
 }

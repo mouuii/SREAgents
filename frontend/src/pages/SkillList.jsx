@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Search, Wrench } from 'lucide-react'
+import { Plus, Wrench, Upload } from 'lucide-react'
 import Header from '../components/Layout/Header'
 import SkillCard from '../components/Skill/SkillCard'
+import UploadSkillModal from '../components/Skill/UploadSkillModal'
 import { useAgents, useAgentDispatch } from '../context/AgentContext'
 
 export default function SkillList() {
@@ -10,6 +11,7 @@ export default function SkillList() {
     const { skills } = useAgents()
     const dispatch = useAgentDispatch()
     const [searchTerm, setSearchTerm] = useState('')
+    const [showUploadModal, setShowUploadModal] = useState(false)
 
     const filteredSkills = skills.filter(skill =>
         skill.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -22,16 +24,31 @@ export default function SkillList() {
         }
     }
 
+    const handleUploadSuccess = (importedSkills) => {
+        importedSkills.forEach(skill => {
+            dispatch({ type: 'ADD_SKILL', payload: skill })
+        })
+    }
+
     return (
         <>
             <Header title="技能管理" />
             <div className="page-content">
                 <div className="page-header">
                     <h2 className="page-title">技能列表</h2>
-                    <button className="btn btn-primary" onClick={() => navigate('/skills/new')}>
-                        <Plus size={18} />
-                        创建技能
-                    </button>
+                    <div className="flex items-center gap-sm">
+                        <button 
+                            className="btn btn-secondary" 
+                            onClick={() => setShowUploadModal(true)}
+                        >
+                            <Upload size={18} />
+                            上传技能
+                        </button>
+                        <button className="btn btn-primary" onClick={() => navigate('/skills/new')}>
+                            <Plus size={18} />
+                            创建技能
+                        </button>
+                    </div>
                 </div>
 
                 <div className="mb-md">
@@ -67,6 +84,12 @@ export default function SkillList() {
                     )}
                 </div>
             </div>
+
+            <UploadSkillModal
+                isOpen={showUploadModal}
+                onClose={() => setShowUploadModal(false)}
+                onUpload={handleUploadSuccess}
+            />
         </>
     )
 }

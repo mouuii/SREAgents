@@ -5,9 +5,12 @@ OpsAgent Platform - Python Backend
 import asyncio
 import os
 import json
+import zipfile
+import tempfile
+import shutil
 from pathlib import Path
-from typing import Optional
-from fastapi import FastAPI, HTTPException
+from typing import Optional, List
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -75,7 +78,18 @@ CHAT_HISTORY_DIR.mkdir(exist_ok=True)
 
 def parse_skill_file(file_path: Path) -> dict:
     """解析技能 Markdown 文件，提取 frontmatter 和内容"""
-    content = file_path.read_text(encoding="utf-8")
+    # 尝试多种编码
+    content = None
+    for encoding in ['utf-8', 'utf-8-sig', 'gbk', 'latin-1']:
+        try:
+            content = file_path.read_text(encoding=encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    
+    if content is None:
+        # 最后尝试二进制读取并忽略错误
+        content = file_path.read_bytes().decode('utf-8', errors='ignore')
     
     # Parse YAML frontmatter
     if content.startswith("---"):
@@ -86,11 +100,11 @@ def parse_skill_file(file_path: Path) -> dict:
             instruction = parts[2].strip()
             return {
                 "id": file_path.stem,
-                "name": frontmatter.get("name", file_path.stem),
-                "description": frontmatter.get("description", ""),
-                "icon": frontmatter.get("icon", "🔧"),
+                "name": frontmatter.get("name", file_path.stem) if frontmatter else file_path.stem,
+                "description": frontmatter.get("description", "") if frontmatter else "",
+                "icon": frontmatter.get("icon", "🔧") if frontmatter else "🔧",
                 "instruction": instruction,
-                "config": frontmatter.get("config", {}),
+                "config": frontmatter.get("config", {}) if frontmatter else {},
                 "documents": []
             }
     
@@ -107,8 +121,11 @@ def parse_skill_file(file_path: Path) -> dict:
 
 
 def save_skill_file(skill: dict):
-    """保存技能为 Markdown 文件"""
+    """保存技能为目录结构 (skills/{id}/SKILL.md)"""
     import yaml
+    
+    skill_dir = SKILLS_DIR / skill['id']
+    skill_dir.mkdir(parents=True, exist_ok=True)
     
     frontmatter = {
         "name": skill.get("name", ""),
@@ -125,31 +142,71 @@ def save_skill_file(skill: dict):
 {skill.get("instruction", "")}
 """
     
-    file_path = SKILLS_DIR / f"{skill['id']}.md"
+    file_path = skill_dir / "SKILL.md"
     file_path.write_text(content, encoding="utf-8")
-    return file_path
+    return skill_dir
+
+
+def get_skill_md_path(skill_id: str) -> Optional[Path]:
+    """获取 skill 的 SKILL.md 路径，兼容目录和单文件两种结构"""
+    # 优先检查目录结构
+    skill_dir = SKILLS_DIR / skill_id
+    if skill_dir.is_dir():
+        for name in ['SKILL.md', 'skill.md', 'Skill.md']:
+            md_path = skill_dir / name
+            if md_path.exists():
+                return md_path
+    # 兼容旧的单文件结构
+    old_path = SKILLS_DIR / f"{skill_id}.md"
+    if old_path.exists():
+        return old_path
+    return None
 
 
 @app.get("/api/skills")
 async def list_skills():
     """获取所有技能列表"""
     skills = []
+    seen_ids = set()
+    
+    # 扫描目录结构
+    for item in SKILLS_DIR.iterdir():
+        if item.is_dir() and not item.name.startswith('.'):
+            skill_md = None
+            for name in ['SKILL.md', 'skill.md', 'Skill.md']:
+                if (item / name).exists():
+                    skill_md = item / name
+                    break
+            if skill_md:
+                try:
+                    skill = parse_skill_file(skill_md)
+                    skill["id"] = item.name
+                    skills.append(skill)
+                    seen_ids.add(item.name)
+                except Exception as e:
+                    print(f"Error parsing {skill_md}: {e}")
+    
+    # 兼容旧的单文件结构
     for file_path in SKILLS_DIR.glob("*.md"):
-        try:
-            skill = parse_skill_file(file_path)
-            skills.append(skill)
-        except Exception as e:
-            print(f"Error parsing {file_path}: {e}")
+        if file_path.stem not in seen_ids:
+            try:
+                skill = parse_skill_file(file_path)
+                skills.append(skill)
+            except Exception as e:
+                print(f"Error parsing {file_path}: {e}")
+    
     return {"skills": skills}
 
 
 @app.get("/api/skills/{skill_id}")
 async def get_skill(skill_id: str):
     """获取单个技能详情"""
-    file_path = SKILLS_DIR / f"{skill_id}.md"
-    if not file_path.exists():
+    md_path = get_skill_md_path(skill_id)
+    if not md_path:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
-    return parse_skill_file(file_path)
+    skill = parse_skill_file(md_path)
+    skill["id"] = skill_id
+    return skill
 
 
 class SkillCreate(BaseModel):
@@ -168,8 +225,8 @@ async def create_skill(skill: SkillCreate):
     if not skill_dict.get("id"):
         skill_dict["id"] = skill_dict["name"].lower().replace(" ", "-")
     
-    file_path = SKILLS_DIR / f"{skill_dict['id']}.md"
-    if file_path.exists():
+    skill_dir = SKILLS_DIR / skill_dict['id']
+    if skill_dir.exists():
         raise HTTPException(status_code=400, detail=f"Skill '{skill_dict['id']}' already exists")
     
     save_skill_file(skill_dict)
@@ -179,8 +236,8 @@ async def create_skill(skill: SkillCreate):
 @app.put("/api/skills/{skill_id}")
 async def update_skill(skill_id: str, skill: SkillCreate):
     """更新技能"""
-    file_path = SKILLS_DIR / f"{skill_id}.md"
-    if not file_path.exists():
+    md_path = get_skill_md_path(skill_id)
+    if not md_path:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
     
     skill_dict = skill.model_dump()
@@ -192,12 +249,274 @@ async def update_skill(skill_id: str, skill: SkillCreate):
 @app.delete("/api/skills/{skill_id}")
 async def delete_skill(skill_id: str):
     """删除技能"""
+    skill_dir = SKILLS_DIR / skill_id
+    if skill_dir.is_dir():
+        shutil.rmtree(skill_dir)
+        return {"success": True}
+    
+    # 兼容旧的单文件
     file_path = SKILLS_DIR / f"{skill_id}.md"
-    if not file_path.exists():
+    if file_path.exists():
+        file_path.unlink()
+        return {"success": True}
+    
+    raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+
+
+@app.get("/api/skills/{skill_id}/files")
+async def list_skill_files(skill_id: str):
+    """获取技能目录下的所有文件"""
+    skill_dir = SKILLS_DIR / skill_id
+    if not skill_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
     
-    file_path.unlink()
+    files = []
+    for item in skill_dir.rglob("*"):
+        if item.is_file():
+            rel_path = str(item.relative_to(skill_dir))
+            files.append({
+                "name": item.name,
+                "path": rel_path,
+                "size": item.stat().st_size,
+                "isSkillMd": item.name.upper() == "SKILL.MD"
+            })
+    return {"files": files}
+
+
+@app.get("/api/skills/{skill_id}/files/{file_path:path}")
+async def get_skill_file(skill_id: str, file_path: str):
+    """获取技能目录下的单个文件内容"""
+    skill_dir = SKILLS_DIR / skill_id
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+    
+    target_file = skill_dir / file_path
+    if not target_file.exists() or not target_file.is_file():
+        raise HTTPException(status_code=404, detail=f"File '{file_path}' not found")
+    
+    # 安全检查：确保文件在 skill 目录内
+    try:
+        target_file.resolve().relative_to(skill_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # 读取文件内容
+    try:
+        content = target_file.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        content = target_file.read_bytes().decode("utf-8", errors="ignore")
+    
+    return {"path": file_path, "content": content}
+
+
+class FileContent(BaseModel):
+    content: str
+
+
+@app.put("/api/skills/{skill_id}/files/{file_path:path}")
+async def update_skill_file(skill_id: str, file_path: str, body: FileContent):
+    """更新技能目录下的单个文件"""
+    skill_dir = SKILLS_DIR / skill_id
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+    
+    target_file = skill_dir / file_path
+    
+    # 安全检查
+    try:
+        target_file.resolve().relative_to(skill_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # 创建父目录
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(body.content, encoding="utf-8")
+    
     return {"success": True}
+
+
+@app.post("/api/skills/{skill_id}/files")
+async def create_skill_file(skill_id: str, file_path: str, body: FileContent):
+    """在技能目录下创建新文件"""
+    skill_dir = SKILLS_DIR / skill_id
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+    
+    target_file = skill_dir / file_path
+    
+    # 安全检查
+    try:
+        target_file.resolve().relative_to(skill_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if target_file.exists():
+        raise HTTPException(status_code=400, detail=f"File '{file_path}' already exists")
+    
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(body.content, encoding="utf-8")
+    
+    return {"success": True, "path": file_path}
+
+
+@app.delete("/api/skills/{skill_id}/files/{file_path:path}")
+async def delete_skill_file(skill_id: str, file_path: str):
+    """删除技能目录下的文件"""
+    skill_dir = SKILLS_DIR / skill_id
+    if not skill_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_id}' not found")
+    
+    target_file = skill_dir / file_path
+    
+    # 不允许删除 SKILL.md
+    if target_file.name.upper() == "SKILL.MD":
+        raise HTTPException(status_code=400, detail="Cannot delete SKILL.md")
+    
+    # 安全检查
+    try:
+        target_file.resolve().relative_to(skill_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not target_file.exists():
+        raise HTTPException(status_code=404, detail=f"File '{file_path}' not found")
+    
+    target_file.unlink()
+    return {"success": True}
+
+
+@app.post("/api/skills/upload")
+async def upload_skill(
+    type: str = Form(...),
+    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
+    folderName: Optional[str] = Form(None)
+):
+    """上传技能文件
+    
+    支持:
+    - 单个 .md 文件
+    - .zip 文件（根目录包含 SKILL.md）
+    - 文件夹上传（包含 SKILL.md）
+    """
+    imported_skills = []
+    
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        extracted_dir = tmp_path / "extracted"
+        extracted_dir.mkdir()
+        
+        if type == "file" and file:
+            ext = file.filename.split('.')[-1].lower()
+            
+            if ext == 'md':
+                # 直接处理单个 .md 文件
+                content = await file.read()
+                md_path = extracted_dir / file.filename
+                md_path.write_bytes(content)
+                
+            elif ext in ['zip', 'skill']:
+                # 处理压缩包
+                content = await file.read()
+                zip_path = tmp_path / file.filename
+                zip_path.write_bytes(content)
+                
+                try:
+                    with zipfile.ZipFile(zip_path, 'r') as zf:
+                        zf.extractall(extracted_dir)
+                except zipfile.BadZipFile:
+                    raise HTTPException(status_code=400, detail="无效的压缩文件")
+            else:
+                raise HTTPException(status_code=400, detail="支持 .md、.zip 文件")
+                
+        elif type == "folder" and files:
+            # 处理文件夹上传
+            for f in files:
+                if not f.filename:
+                    continue
+                # 保持相对路径结构
+                rel_path = f.filename.split('/', 1)[-1] if '/' in f.filename else f.filename
+                file_path = extracted_dir / rel_path
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                content = await f.read()
+                file_path.write_bytes(content)
+        else:
+            raise HTTPException(status_code=400, detail="无效的上传参数")
+        
+        # 查找 SKILL.md（优先）或其他 .md 文件
+        skill_md = None
+        for name in ['SKILL.md', 'skill.md', 'Skill.md']:
+            found = list(extracted_dir.rglob(name))
+            if found:
+                skill_md = found[0]
+                break
+        
+        if not skill_md:
+            # 尝试找任意 .md 文件
+            md_files = [f for f in extracted_dir.rglob("*.md") 
+                       if f.name.lower() not in ['readme.md', 'changelog.md', 'license.md']]
+            if md_files:
+                skill_md = md_files[0]
+        
+        if not skill_md:
+            raise HTTPException(status_code=400, detail="没有找到 SKILL.md 文件")
+        
+        try:
+            skill = parse_skill_file(skill_md)
+            
+            # 确定 skill id
+            if folderName:
+                # 去掉 .skill 后缀
+                skill_id = folderName.replace('.skill', '').lower().replace(" ", "-")
+            elif skill_md.parent != extracted_dir:
+                # 使用包含 SKILL.md 的目录名
+                skill_id = skill_md.parent.name.replace('.skill', '').lower().replace(" ", "-")
+            else:
+                # 使用文件名
+                skill_id = skill_md.stem.lower().replace(" ", "-")
+            
+            skill["id"] = skill_id
+            
+            # 检查是否已存在，添加后缀避免冲突
+            base_id = skill_id
+            target_dir = SKILLS_DIR / skill_id
+            if target_dir.exists() or (SKILLS_DIR / f"{skill_id}.md").exists():
+                i = 1
+                while (SKILLS_DIR / f"{base_id}-{i}").exists():
+                    i += 1
+                skill["id"] = f"{base_id}-{i}"
+            
+            # 创建目标目录
+            target_dir = SKILLS_DIR / skill["id"]
+            target_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 复制所有文件到目标目录
+            source_dir = skill_md.parent
+            for item in source_dir.iterdir():
+                if item.is_file():
+                    # 重命名为 SKILL.md（统一格式）
+                    if item.name.lower() in ['skill.md']:
+                        shutil.copy(item, target_dir / "SKILL.md")
+                    else:
+                        shutil.copy(item, target_dir / item.name)
+                elif item.is_dir():
+                    shutil.copytree(item, target_dir / item.name)
+            
+            imported_skills.append(skill)
+            
+        except Exception as e:
+            print(f"Error importing skill: {e}")
+            raise HTTPException(status_code=400, detail=f"导入失败: {str(e)}")
+            
+        except Exception as e:
+            print(f"Error importing skill: {e}")
+            raise HTTPException(status_code=400, detail=f"导入失败: {str(e)}")
+    
+    return {
+        "success": True,
+        "imported": len(imported_skills),
+        "skills": imported_skills
+    }
 
 
 # ==================== Agents API ====================
