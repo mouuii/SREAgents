@@ -6,6 +6,7 @@ import SkillCard from '../components/Skill/SkillCard'
 import Modal from '../components/common/Modal'
 import { useAgents, useAgentDispatch, agentsApi } from '../context/AgentContext'
 import { useProjects } from '../context/ProjectContext'
+import { useToast } from '../context/ToastContext'
 
 export default function AgentEdit() {
     const { id, projectId } = useParams()
@@ -13,6 +14,7 @@ export default function AgentEdit() {
     const { agents, skills } = useAgents()
     const dispatch = useAgentDispatch()
     const { currentProject, projects } = useProjects()
+    const toast = useToast()
 
     // 从 URL 或 currentProject 获取项目 ID
     const targetProjectId = projectId || currentProject?.id || ''
@@ -65,24 +67,28 @@ export default function AgentEdit() {
     const availableSkills = skills.filter(s => !(agent.skills || []).includes(s.id))
 
     const handleSave = async () => {
+        if (!agent.name.trim()) {
+            toast.warning('请输入智能体名称')
+            return
+        }
         const agentData = { ...agent, projectId: targetProjectId }
         try {
             if (isNew) {
                 const result = await agentsApi.create(agentData)
                 dispatch({ type: 'ADD_AGENT', payload: result.agent })
+                toast.success('智能体创建成功')
             } else {
                 const result = await agentsApi.update(agentData.id, agentData)
                 dispatch({ type: 'UPDATE_AGENT', payload: result.agent })
+                toast.success('智能体保存成功')
             }
-            // 返回项目详情页
             if (targetProjectId) {
                 navigate(`/projects/${targetProjectId}`)
             } else {
                 navigate('/')
             }
         } catch (err) {
-            console.error('Failed to save agent:', err)
-            alert('保存失败: ' + err.message)
+            toast.error('保存失败: ' + err.message)
         }
     }
 

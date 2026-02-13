@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Header from '../components/Layout/Header'
 import { useAgents } from '../context/AgentContext'
+import { useToast } from '../context/ToastContext'
 
 export default function AgentChat() {
     const { id } = useParams()
@@ -17,6 +18,7 @@ export default function AgentChat() {
     const [isLoading, setIsLoading] = useState(false)
     const [historyLoaded, setHistoryLoaded] = useState(false)
     const messagesEndRef = useRef(null)
+    const toast = useToast()
 
     // 加载对话历史
     useEffect(() => {
@@ -42,8 +44,8 @@ export default function AgentChat() {
                         content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`
                     }])
                 }
-            } catch (error) {
-                console.error('Failed to load chat history:', error)
+            } catch {
+                toast.error('加载对话历史失败')
                 setMessages([{
                     role: 'assistant',
                     content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`
@@ -53,7 +55,7 @@ export default function AgentChat() {
         }
         
         loadHistory()
-    }, [id, agent])
+    }, [id, agent, toast])
 
     // 保存对话历史
     useEffect(() => {
@@ -66,13 +68,13 @@ export default function AgentChat() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ messages })
                 })
-            } catch (error) {
-                console.error('Failed to save chat history:', error)
+            } catch {
+                toast.error('保存对话历史失败')
             }
         }
         
         saveHistory()
-    }, [id, messages, historyLoaded])
+    }, [id, messages, historyLoaded, toast])
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -124,7 +126,7 @@ export default function AgentChat() {
                 }, 1000)
                 return
             }
-        } catch (error) {
+        } catch {
             // Mock response for demo when API is not available
             setTimeout(() => {
                 setMessages(prev => [...prev, {
@@ -172,7 +174,7 @@ export default function AgentChat() {
                                 if (confirm('确定要清空对话历史吗？')) {
                                     try {
                                         await fetch(`/api/chat/history/${id}`, { method: 'DELETE' })
-                                    } catch (e) { /* ignore */ }
+                                    } catch { /* ignore */ }
                                     setMessages([{
                                         role: 'assistant',
                                         content: `你好！我是 ${agent?.name || '智能体'}，${agent?.description || '有什么可以帮你的吗？'}`

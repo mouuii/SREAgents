@@ -5,6 +5,7 @@ OpsAgent Platform - Python Backend
 import asyncio
 import os
 import json
+import logging
 import zipfile
 import tempfile
 import shutil
@@ -15,6 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("opsagent")
+
 # Load environment variables
 load_dotenv()
 
@@ -22,7 +31,7 @@ load_dotenv()
 try:
     from claude_agent_sdk import query, ClaudeAgentOptions
 except ImportError:
-    print("Warning: claude-agent-sdk not installed. Run: uv add claude-agent-sdk")
+    logger.warning("claude-agent-sdk not installed. Run: uv add claude-agent-sdk")
     query = None
     ClaudeAgentOptions = None
 
@@ -214,7 +223,7 @@ async def list_skills():
                     skills.append(skill)
                     seen_ids.add(item.name)
                 except Exception as e:
-                    print(f"Error parsing {skill_md}: {e}")
+                    logger.error("Error parsing %s: %s", skill_md, e)
     
     # 兼容旧的单文件结构
     for file_path in SKILLS_DIR.glob("*.md"):
@@ -223,7 +232,7 @@ async def list_skills():
                 skill = parse_skill_file(file_path)
                 skills.append(skill)
             except Exception as e:
-                print(f"Error parsing {file_path}: {e}")
+                logger.error("Error parsing %s: %s", file_path, e)
     
     return {"skills": skills}
 
@@ -535,13 +544,9 @@ async def upload_skill(
             imported_skills.append(skill)
             
         except Exception as e:
-            print(f"Error importing skill: {e}")
+            logger.error("Error importing skill: %s", e)
             raise HTTPException(status_code=400, detail=f"导入失败: {str(e)}")
-            
-        except Exception as e:
-            print(f"Error importing skill: {e}")
-            raise HTTPException(status_code=400, detail=f"导入失败: {str(e)}")
-    
+
     return {
         "success": True,
         "imported": len(imported_skills),
@@ -624,7 +629,7 @@ async def list_agents():
             agent = parse_agent_file(file_path)
             agents.append(agent)
         except Exception as e:
-            print(f"Error parsing {file_path}: {e}")
+            logger.error("Error parsing %s: %s", file_path, e)
     return {"agents": agents}
 
 
@@ -719,7 +724,7 @@ async def get_chat_history(agent_id: str):
         data = json.loads(file_path.read_text(encoding="utf-8"))
         return {"messages": data.get("messages", [])}
     except Exception as e:
-        print(f"Error reading chat history: {e}")
+        logger.error("Error reading chat history: %s", e)
         return {"messages": []}
 
 
@@ -864,7 +869,7 @@ async def list_projects():
             project["agentCount"] = len(project.get("agents", []))
             projects.append(project)
         except Exception as e:
-            print(f"Error loading project {file_path}: {e}")
+            logger.error("Error loading project %s: %s", file_path, e)
     return {"projects": projects}
 
 
