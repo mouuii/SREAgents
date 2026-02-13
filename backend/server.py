@@ -786,6 +786,7 @@ async def chat(request: ChatRequest):
                 if StreamEvent and isinstance(message, StreamEvent):
                     event = message.event
                     event_type = event.get("type", "")
+                    logger.debug("StreamEvent type=%s keys=%s", event_type, list(event.keys()))
                     if event_type == "content_block_delta":
                         delta = event.get("delta", {})
                         if delta.get("type") == "text_delta":
@@ -795,13 +796,17 @@ async def chat(request: ChatRequest):
                                 yield f"data: {data}\n\n"
                 # 完整消息（作为兜底）
                 elif hasattr(message, 'content'):
+                    logger.info("Full message: role=%s blocks=%d", getattr(message, 'role', '?'), len(message.content) if message.content else 0)
                     for block in message.content:
                         if hasattr(block, 'text') and block.text:
+                            logger.info("Text block length=%d", len(block.text))
                             data = json.dumps({"type": "text", "content": block.text}, ensure_ascii=False)
                             yield f"data: {data}\n\n"
                         elif hasattr(block, 'name'):
                             data = json.dumps({"type": "tool", "name": block.name}, ensure_ascii=False)
                             yield f"data: {data}\n\n"
+                else:
+                    logger.info("Unknown message type: %s attrs=%s", type(message).__name__, [a for a in dir(message) if not a.startswith('_')])
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error("Chat stream error: %s", e)
