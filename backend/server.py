@@ -31,10 +31,12 @@ load_dotenv()
 # Import Claude Agent SDK
 try:
     from claude_agent_sdk import query, ClaudeAgentOptions
+    from claude_agent_sdk.types import StreamEvent
 except ImportError:
     logger.warning("claude-agent-sdk not installed. Run: uv add claude-agent-sdk")
     query = None
     ClaudeAgentOptions = None
+    StreamEvent = None
 
 # Import storage manager
 from storage.manager import storage
@@ -776,10 +778,23 @@ async def chat(request: ChatRequest):
                     setting_sources=["project"],
                     allowed_tools=["Skill", "Read", "Bash", "Glob", "WebFetch"],
                     permission_mode="acceptEdits",
-                    max_turns=3
+                    max_turns=3,
+                    include_partial_messages=True
                 )
             ):
-                if hasattr(message, 'content'):
+                # 逐 token 流式输出
+                if StreamEvent and isinstance(message, StreamEvent):
+                    event = message.event
+                    event_type = event.get("type", "")
+                    if event_type == "content_block_delta":
+                        delta = event.get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text", "")
+                            if text:
+                                data = json.dumps({"type": "delta", "content": text}, ensure_ascii=False)
+                                yield f"data: {data}\n\n"
+                # 完整消息（作为兜底）
+                elif hasattr(message, 'content'):
                     for block in message.content:
                         if hasattr(block, 'text') and block.text:
                             data = json.dumps({"type": "text", "content": block.text}, ensure_ascii=False)

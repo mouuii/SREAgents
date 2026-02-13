@@ -146,7 +146,7 @@ export default function AgentChat() {
 
                     try {
                         const parsed = JSON.parse(data)
-                        if (parsed.type === 'text') {
+                        if (parsed.type === 'delta' || parsed.type === 'text') {
                             setMessages(prev => {
                                 const updated = [...prev]
                                 const current = updated[assistantIdx]
