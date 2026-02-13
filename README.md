@@ -8,6 +8,7 @@
 - 🛠️ 灵活配置 Agent 技能（Prometheus 监控、Jaeger 链路追踪等）
 - 💬 自然语言对话执行运维任务
 - 📊 集成监控和链路追踪数据查询
+- ⏰ 定时任务调度（支持 Cron 表达式，自动执行运维检查）
 
 ## 运行截图
 
@@ -82,8 +83,36 @@ cd frontend && npm run build
 ## 技术栈
 
 - Frontend: React 19 + Vite 7
-- Backend: Python FastAPI + Claude Agent SDK
+- Backend: Python FastAPI + Claude Agent SDK + APScheduler
 - Mock Services: Prometheus + Jaeger 模拟服务
+
+## 定时任务
+
+SREAgents 支持定时任务调度，可以让 Agent 自动执行周期性的运维检查。
+
+### 使用示例
+
+1. 在 Web 界面创建定时任务
+2. 选择要执行的 Agent
+3. 配置 Cron 表达式（如 `0 0 * * *` 表示每天凌晨执行）
+4. 设置执行时发送给 Agent 的提示词
+5. 启用任务，调度器会自动按计划执行
+
+### Cron 表达式示例
+
+```
+0 0 * * *     # 每天凌晨 00:00
+0 */6 * * *   # 每 6 小时
+0 9 * * 1-5   # 工作日上午 9:00
+*/15 * * * *  # 每 15 分钟
+```
+
+### API 接口
+
+- `GET /api/scheduled-tasks` - 获取任务列表
+- `POST /api/scheduled-tasks` - 创建任务
+- `POST /api/scheduled-tasks/{id}/trigger` - 手动触发执行
+- `GET /api/scheduled-tasks/{id}/executions` - 查看执行历史
 
 ## License
 

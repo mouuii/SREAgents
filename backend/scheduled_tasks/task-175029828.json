@@ -1,0 +1,14 @@
+{
+  "id": "task-175029828",
+  "name": "每日健康检查",
+  "description": "每天凌晨检查所有服务的健康状态",
+  "agentId": "agent-1770631265249",
+  "projectId": "proj-416685716",
+  "cronExpression": "0 0 * * *",
+  "prompt": "请检查所有服务的健康状态，分析 Prometheus 指标，并生成健康报告",
+  "enabled": true,
+  "createdAt": "2026-02-13T15:41:27.821078",
+  "updatedAt": "2026-02-13T15:41:27.821078",
+  "lastExecutedAt": "2026-02-13T15:42:28.133961",
+  "nextExecutionAt": "2026-02-14T00:00:00+08:00"
+}

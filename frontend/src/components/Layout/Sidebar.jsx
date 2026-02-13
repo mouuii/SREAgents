@@ -4,7 +4,8 @@ import {
     Settings,
     BookOpen,
     Cpu,
-    FolderKanban
+    FolderKanban,
+    Clock
 } from 'lucide-react'
 
 export default function Sidebar() {
@@ -35,6 +36,13 @@ export default function Sidebar() {
                     >
                         <Wrench size={18} className="nav-item-icon" />
                         <span>技能库</span>
+                    </NavLink>
+                    <NavLink
+                        to="/scheduled-tasks"
+                        className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                    >
+                        <Clock size={18} className="nav-item-icon" />
+                        <span>定时任务</span>
                     </NavLink>
                 </div>
 

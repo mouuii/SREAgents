@@ -54,9 +54,10 @@ cd frontend && npm run build
 - `manager.py`: 单例 `StorageManager`，通过 `/api/storage/config` 接口切换存储后端
 
 ### 前端状态管理
-使用 React Context API，两个 Provider 包裹整个应用：
+使用 React Context API，三个 Provider 包裹整个应用：
 - `ProjectContext` — 项目 CRUD，从 `/api/projects` 获取数据
 - `AgentContext` — 智能体 CRUD，从 `/api/agents` 获取数据
+- `ScheduledTaskContext` — 定时任务 CRUD，从 `/api/scheduled-tasks` 获取数据
 
 拓扑编辑使用 `@xyflow/react`，Skill 编辑使用 Monaco Editor，Markdown 渲染使用 `react-markdown`。
 
@@ -65,9 +66,13 @@ cd frontend && npm run build
 - **Skill**: `backend/skills/{skill_id}/SKILL.md`（SDK 原生 Skill 在 `backend/.claude/skills/`）— YAML frontmatter + Markdown 指令
 - **Project**: `backend/projects/{project_id}.json` — 拓扑图 (nodes/edges)、关联 Agent 列表、元数据
 - **Chat 历史**: `backend/chat_history/{agent_id}.json` — {role, content} 消息数组
+- **定时任务**: `backend/scheduled_tasks/{task_id}.json` — 任务定义（名称、Cron 表达式、Agent ID、提示词等）
+- **任务执行历史**: `backend/scheduled_tasks/{task_id}/executions/{execution_id}.json` — 执行记录（开始时间、结束时间、状态、结果）
 
 ### server.py 关键结构
-后端按注释分区组织：Storage Config、Skills、Agents、Projects、Chat。对话接口调用 Claude Agent SDK 的 `query()`，传入 Agent 系统提示词和技能列表，最大 10 轮对话，权限模式为 `acceptEdits`。
+后端按注释分区组织：Storage Config、Skills、Agents、Projects、Chat、Scheduled Tasks。对话接口调用 Claude Agent SDK 的 `query()`，传入 Agent 系统提示词和技能列表，最大 10 轮对话，权限模式为 `acceptEdits`。
+
+定时任务使用 APScheduler 调度引擎，支持 Cron 表达式，在 FastAPI 的 startup 事件中初始化并加载已启用的任务。
 
 ## 环境要求
 

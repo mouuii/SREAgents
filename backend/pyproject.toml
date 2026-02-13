@@ -11,6 +11,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "pydantic>=2.0.0",
     "httpx>=0.28.1",
+    "apscheduler>=3.11.2",
 ]
 
 [build-system]

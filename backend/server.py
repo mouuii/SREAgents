@@ -9,6 +9,7 @@ import logging
 import zipfile
 import tempfile
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -1052,6 +1053,421 @@ async def update_project_topology(project_id: str, topology: dict):
     project["topology"] = topology
     save_project(project)
     return {"success": True}
+
+
+# ==================== Scheduled Tasks API ====================
+
+# 定时任务存储目录
+SCHEDULED_TASKS_DIR = Path(__file__).parent / "scheduled_tasks"
+SCHEDULED_TASKS_DIR.mkdir(exist_ok=True)
+
+
+class ScheduledTaskCreate(BaseModel):
+    """创建定时任务的请求模型"""
+    name: str
+    description: str = ""
+    agentId: str
+    projectId: Optional[str] = None
+    cronExpression: str
+    prompt: str
+    enabled: bool = True
+
+
+class ScheduledTaskUpdate(BaseModel):
+    """更新定时任务的请求模型"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cronExpression: Optional[str] = None
+    prompt: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+def get_task_path(task_id: str) -> Path:
+    """获取任务文件路径"""
+    return SCHEDULED_TASKS_DIR / f"{task_id}.json"
+
+
+def load_task(task_id: str) -> dict:
+    """加载任务配置"""
+    file_path = get_task_path(task_id)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return json.loads(file_path.read_text(encoding="utf-8"))
+
+
+def save_task(task: dict):
+    """保存任务配置"""
+    file_path = get_task_path(task["id"])
+    file_path.write_text(json.dumps(task, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_execution_path(task_id: str, execution_id: str) -> Path:
+    """获取执行记录文件路径"""
+    return SCHEDULED_TASKS_DIR / task_id / "executions" / f"{execution_id}.json"
+
+
+def load_execution(task_id: str, execution_id: str) -> dict:
+    """加载执行记录"""
+    file_path = get_execution_path(task_id, execution_id)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
+    return json.loads(file_path.read_text(encoding="utf-8"))
+
+
+def list_executions(task_id: str, limit: int = 20, offset: int = 0) -> tuple[list[dict], int]:
+    """
+    列出任务的执行历史
+
+    Returns:
+        (执行记录列表, 总数)
+    """
+    executions_dir = SCHEDULED_TASKS_DIR / task_id / "executions"
+    if not executions_dir.exists():
+        return [], 0
+
+    # 读取所有执行记录
+    executions = []
+    for exec_file in executions_dir.glob("*.json"):
+        try:
+            execution = json.loads(exec_file.read_text(encoding="utf-8"))
+            executions.append(execution)
+        except Exception as e:
+            logger.error(f"Failed to load execution {exec_file}: {e}")
+
+    # 按开始时间倒序排序
+    executions.sort(key=lambda x: x.get("startTime", ""), reverse=True)
+
+    total = len(executions)
+    return executions[offset:offset + limit], total
+
+
+@app.get("/api/scheduled-tasks")
+async def list_scheduled_tasks(
+    agentId: Optional[str] = None,
+    projectId: Optional[str] = None,
+    enabled: Optional[bool] = None
+):
+    """获取定时任务列表"""
+    tasks = []
+
+    for task_file in SCHEDULED_TASKS_DIR.glob("*.json"):
+        try:
+            task = json.loads(task_file.read_text(encoding="utf-8"))
+
+            # 过滤条件
+            if agentId and task.get("agentId") != agentId:
+                continue
+            if projectId and task.get("projectId") != projectId:
+                continue
+            if enabled is not None and task.get("enabled") != enabled:
+                continue
+
+            tasks.append(task)
+        except Exception as e:
+            logger.error(f"Failed to load task {task_file}: {e}")
+
+    # 按创建时间倒序排序
+    tasks.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+
+    return {"tasks": tasks}
+
+
+@app.get("/api/scheduled-tasks/{task_id}")
+async def get_scheduled_task(task_id: str):
+    """获取定时任务详情"""
+    return load_task(task_id)
+
+
+@app.post("/api/scheduled-tasks")
+async def create_scheduled_task(task: ScheduledTaskCreate):
+    """创建定时任务"""
+    # 验证 Agent 是否存在
+    agent_file = AGENTS_DIR / f"{task.agentId}.md"
+    if not agent_file.exists():
+        raise HTTPException(status_code=400, detail=f"Agent '{task.agentId}' not found")
+
+    # 验证 Cron 表达式
+    if not task_scheduler.validate_cron_expression(task.cronExpression):
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {task.cronExpression}")
+
+    # 创建任务
+    task_id = f"task-{int(asyncio.get_event_loop().time() * 1000)}"
+    now = datetime.now().isoformat()
+
+    task_data = {
+        "id": task_id,
+        "name": task.name,
+        "description": task.description,
+        "agentId": task.agentId,
+        "projectId": task.projectId,
+        "cronExpression": task.cronExpression,
+        "prompt": task.prompt,
+        "enabled": task.enabled,
+        "createdAt": now,
+        "updatedAt": now,
+        "lastExecutedAt": None,
+        "nextExecutionAt": None
+    }
+
+    # 保存任务
+    save_task(task_data)
+
+    # 如果启用，添加到调度器
+    if task.enabled:
+        await task_scheduler.add_task(task_data)
+
+        # 更新 nextExecutionAt
+        next_run = task_scheduler.get_next_run_time(task_id)
+        if next_run:
+            task_data["nextExecutionAt"] = next_run.isoformat()
+            save_task(task_data)
+
+    logger.info(f"Created task {task_id}: {task.name}")
+    return {"success": True, "task": task_data}
+
+
+@app.put("/api/scheduled-tasks/{task_id}")
+async def update_scheduled_task(task_id: str, update: ScheduledTaskUpdate):
+    """更新定时任务"""
+    task = load_task(task_id)
+
+    # 更新字段
+    if update.name is not None:
+        task["name"] = update.name
+    if update.description is not None:
+        task["description"] = update.description
+    if update.cronExpression is not None:
+        # 验证新的 Cron 表达式
+        if not task_scheduler.validate_cron_expression(update.cronExpression):
+            raise HTTPException(status_code=400, detail=f"Invalid cron expression: {update.cronExpression}")
+        task["cronExpression"] = update.cronExpression
+    if update.prompt is not None:
+        task["prompt"] = update.prompt
+    if update.enabled is not None:
+        task["enabled"] = update.enabled
+
+    task["updatedAt"] = datetime.now().isoformat()
+
+    # 保存任务
+    save_task(task)
+
+    # 更新调度器
+    await task_scheduler.update_task(task)
+
+    # 更新 nextExecutionAt
+    if task["enabled"]:
+        next_run = task_scheduler.get_next_run_time(task_id)
+        if next_run:
+            task["nextExecutionAt"] = next_run.isoformat()
+            save_task(task)
+    else:
+        task["nextExecutionAt"] = None
+        save_task(task)
+
+    logger.info(f"Updated task {task_id}")
+    return {"success": True, "task": task}
+
+
+@app.delete("/api/scheduled-tasks/{task_id}")
+async def delete_scheduled_task(task_id: str):
+    """删除定时任务"""
+    task_file = get_task_path(task_id)
+    if not task_file.exists():
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+
+    # 从调度器移除
+    await task_scheduler.remove_task(task_id)
+
+    # 删除任务文件
+    task_file.unlink()
+
+    # 删除执行历史目录
+    executions_dir = SCHEDULED_TASKS_DIR / task_id
+    if executions_dir.exists():
+        import shutil
+        shutil.rmtree(executions_dir)
+
+    logger.info(f"Deleted task {task_id}")
+    return {"success": True}
+
+
+@app.post("/api/scheduled-tasks/{task_id}/enable")
+async def enable_scheduled_task(task_id: str):
+    """启用定时任务"""
+    task = load_task(task_id)
+
+    if task["enabled"]:
+        return {"success": True, "task": task}
+
+    task["enabled"] = True
+    task["updatedAt"] = datetime.now().isoformat()
+    save_task(task)
+
+    # 添加到调度器
+    await task_scheduler.add_task(task)
+
+    # 更新 nextExecutionAt
+    next_run = task_scheduler.get_next_run_time(task_id)
+    if next_run:
+        task["nextExecutionAt"] = next_run.isoformat()
+        save_task(task)
+
+    logger.info(f"Enabled task {task_id}")
+    return {"success": True, "task": task}
+
+
+@app.post("/api/scheduled-tasks/{task_id}/disable")
+async def disable_scheduled_task(task_id: str):
+    """禁用定时任务"""
+    task = load_task(task_id)
+
+    if not task["enabled"]:
+        return {"success": True, "task": task}
+
+    task["enabled"] = False
+    task["updatedAt"] = datetime.now().isoformat()
+    task["nextExecutionAt"] = None
+    save_task(task)
+
+    # 从调度器移除
+    await task_scheduler.remove_task(task_id)
+
+    logger.info(f"Disabled task {task_id}")
+    return {"success": True, "task": task}
+
+
+@app.post("/api/scheduled-tasks/{task_id}/trigger")
+async def trigger_scheduled_task(task_id: str):
+    """手动触发任务执行"""
+    task = load_task(task_id)
+
+    # 异步执行任务（不阻塞 API 响应）
+    execution = await task_scheduler.execute_task(task_id)
+
+    logger.info(f"Manually triggered task {task_id}, execution {execution['id']}")
+    return {"success": True, "execution": execution}
+
+
+@app.get("/api/scheduled-tasks/{task_id}/executions")
+async def get_task_executions(task_id: str, limit: int = 20, offset: int = 0):
+    """获取任务的执行历史"""
+    # 验证任务是否存在
+    load_task(task_id)
+
+    executions, total = list_executions(task_id, limit, offset)
+    return {"executions": executions, "total": total}
+
+
+@app.get("/api/scheduled-tasks/{task_id}/executions/{execution_id}")
+async def get_task_execution(task_id: str, execution_id: str):
+    """获取单次执行详情"""
+    return load_execution(task_id, execution_id)
+
+
+# ==================== Application Lifecycle ====================
+
+# 全局调度器实例
+task_scheduler = None
+
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化调度器"""
+    global task_scheduler
+    from scheduler import TaskScheduler
+
+    # 创建调度器实例
+    task_scheduler = TaskScheduler(
+        tasks_dir=SCHEDULED_TASKS_DIR,
+        agent_query_func=execute_agent_query
+    )
+
+    # 启动调度器
+    await task_scheduler.start()
+
+    logger.info("Application started successfully")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时停止调度器"""
+    global task_scheduler
+    if task_scheduler:
+        await task_scheduler.stop()
+
+    logger.info("Application shutdown successfully")
+
+
+async def execute_agent_query(agent_id: str, prompt: str):
+    """
+    执行 Agent 查询（供调度器调用）
+
+    Args:
+        agent_id: Agent ID
+        prompt: 提示词
+
+    Yields:
+        Claude SDK 返回的消息流
+    """
+    if not query:
+        raise Exception("Claude Agent SDK not installed")
+
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        raise Exception("ANTHROPIC_API_KEY not configured")
+
+    # 加载 agent 信息
+    agent_file = AGENTS_DIR / f"{agent_id}.md"
+    if not agent_file.exists():
+        raise Exception(f"Agent '{agent_id}' not found")
+
+    agent_data = parse_agent_file(agent_file)
+
+    # 构建 system prompt
+    base_prompt = agent_data.get("systemPrompt", "") or "你是一个智能运维助手。"
+    prompt_parts = [base_prompt]
+
+    # 注入项目拓扑信息
+    project_id = agent_data.get("projectId", "")
+    if project_id:
+        project_file = PROJECTS_DIR / f"{project_id}.json"
+        if project_file.exists():
+            try:
+                project = json.loads(project_file.read_text(encoding="utf-8"))
+                topo = project.get("topology", {})
+                nodes = topo.get("nodes", [])
+                edges = topo.get("edges", [])
+                if nodes:
+                    prompt_parts.append(f"\n## 你负责的项目: {project.get('name', project_id)}")
+                    prompt_parts.append("### 服务拓扑")
+                    node_map = {}
+                    for n in nodes:
+                        node_map[n["id"]] = n.get("name", n["id"])
+                        prompt_parts.append(f"- [{n.get('type', 'service')}] {n.get('name', n['id'])}")
+                    if edges:
+                        prompt_parts.append("### 调用关系")
+                        for e in edges:
+                            src = node_map.get(e["from"], e["from"])
+                            dst = node_map.get(e["to"], e["to"])
+                            prompt_parts.append(f"- {src} → {dst} ({e.get('type', 'calls')})")
+            except Exception as e:
+                logger.error("Failed to load project topology: %s", e)
+
+    system_prompt = "\n\n".join(prompt_parts)
+
+    # 调用 Claude SDK
+    async for message in query(
+        prompt=prompt,
+        options=ClaudeAgentOptions(
+            system_prompt=system_prompt,
+            cwd=str(Path(__file__).parent),
+            setting_sources=["project"],
+            allowed_tools=["Skill", "Read", "Bash", "Glob", "WebFetch"],
+            permission_mode="acceptEdits",
+            max_turns=10,
+            include_partial_messages=True
+        )
+    ):
+        yield message
 
 
 if __name__ == "__main__":
