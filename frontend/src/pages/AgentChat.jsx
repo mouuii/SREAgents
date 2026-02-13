@@ -57,11 +57,11 @@ export default function AgentChat() {
         loadHistory()
     }, [id, agent, toast])
 
-    // 保存对话历史
+    // 保存对话历史（防抖，流式输出期间不保存）
     useEffect(() => {
-        if (!id || !historyLoaded || messages.length === 0) return
-        
-        const saveHistory = async () => {
+        if (!id || !historyLoaded || messages.length === 0 || isLoading) return
+
+        const timer = setTimeout(async () => {
             try {
                 await fetch(`/api/chat/history/${id}`, {
                     method: 'PUT',
@@ -71,17 +71,19 @@ export default function AgentChat() {
             } catch {
                 toast.error('保存对话历史失败')
             }
-        }
-        
-        saveHistory()
-    }, [id, messages, historyLoaded, toast])
+        }, 1000)
+
+        return () => clearTimeout(timer)
+    }, [id, messages, historyLoaded, isLoading, toast])
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
 
+    // 滚动到底部（防抖，避免流式输出时频繁触发）
     useEffect(() => {
-        scrollToBottom()
+        const timer = setTimeout(scrollToBottom, 100)
+        return () => clearTimeout(timer)
     }, [messages])
 
     const handleSubmit = async (e) => {
