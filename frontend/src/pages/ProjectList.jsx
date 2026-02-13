@@ -4,12 +4,14 @@ import { Plus, FolderOpen, Trash2, Bot, Network } from 'lucide-react'
 import Header from '../components/Layout/Header'
 import { useProjects, useProjectDispatch, projectsApi } from '../context/ProjectContext'
 import { useAgents } from '../context/AgentContext'
+import { useToast } from '../context/ToastContext'
 
 export default function ProjectList() {
     const navigate = useNavigate()
     const { projects, loading } = useProjects()
     const { agents } = useAgents()
     const dispatch = useProjectDispatch()
+    const toast = useToast()
     const [showCreateModal, setShowCreateModal] = useState(false)
     const [newProject, setNewProject] = useState({ name: '', description: '' })
 
@@ -22,7 +24,7 @@ export default function ProjectList() {
             setNewProject({ name: '', description: '' })
             navigate(`/projects/${res.project.id}`)
         } catch (err) {
-            console.error('Failed to create project:', err)
+            toast.error('创建项目失败: ' + err.message)
         }
     }
 
@@ -32,8 +34,9 @@ export default function ProjectList() {
         try {
             await projectsApi.delete(project.id)
             dispatch({ type: 'DELETE_PROJECT', payload: project.id })
+            toast.success('项目已删除')
         } catch (err) {
-            console.error('Failed to delete project:', err)
+            toast.error('删除项目失败: ' + err.message)
         }
     }
 
@@ -46,7 +49,27 @@ export default function ProjectList() {
             <>
                 <Header title="项目" />
                 <div className="page-content">
-                    <div className="loading">加载中...</div>
+                    <div className="page-header">
+                        <div className="page-title">
+                            <h2>我的项目</h2>
+                            <p>每个项目包含独立的智能体和服务拓扑</p>
+                        </div>
+                    </div>
+                    <div className="project-grid">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className="project-card" style={{ cursor: 'default' }}>
+                                <div className="project-header">
+                                    <div className="skeleton skeleton-avatar" />
+                                    <div className="project-info" style={{ gap: 8 }}>
+                                        <div className="skeleton skeleton-line" style={{ width: '70%' }} />
+                                        <div className="skeleton skeleton-line skeleton-line-short" />
+                                    </div>
+                                </div>
+                                <div className="skeleton skeleton-line" style={{ marginTop: 16 }} />
+                                <div className="skeleton skeleton-line skeleton-line-short" />
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </>
         )

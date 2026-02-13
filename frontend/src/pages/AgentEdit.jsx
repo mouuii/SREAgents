@@ -48,7 +48,20 @@ export default function AgentEdit() {
             <>
                 <Header title={isNew ? "创建智能体" : "编辑智能体"} />
                 <div className="page-content">
-                    <div className="text-center text-muted">加载中...</div>
+                    <div className="split-panel">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className="panel">
+                                <div className="panel-header">
+                                    <div className="skeleton skeleton-line" style={{ width: '40%', marginBottom: 0 }} />
+                                </div>
+                                <div className="panel-body">
+                                    <div className="skeleton skeleton-line" style={{ width: '80%' }} />
+                                    <div className="skeleton skeleton-line" />
+                                    <div className="skeleton skeleton-line skeleton-line-short" />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </>
         )
