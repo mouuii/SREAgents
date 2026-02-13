@@ -765,8 +765,43 @@ async def chat(request: ChatRequest):
             detail="ANTHROPIC_API_KEY not configured in .env"
         )
 
-    # 获取 agent 的 system prompt
-    system_prompt = request.systemPrompt or "你是一个智能运维助手。"
+    # 加载 agent 信息
+    agent_file = AGENTS_DIR / f"{request.agentId}.md"
+    agent_data = {}
+    if agent_file.exists():
+        agent_data = parse_agent_file(agent_file)
+
+    # 构建 system prompt：agent 自身提示词 + 项目拓扑上下文
+    base_prompt = request.systemPrompt or agent_data.get("systemPrompt", "") or "你是一个智能运维助手。"
+    prompt_parts = [base_prompt]
+
+    # 注入项目拓扑信息，让 agent 了解它负责的微服务架构
+    project_id = agent_data.get("projectId", "")
+    if project_id:
+        project_file = PROJECTS_DIR / f"{project_id}.json"
+        if project_file.exists():
+            try:
+                project = json.loads(project_file.read_text(encoding="utf-8"))
+                topo = project.get("topology", {})
+                nodes = topo.get("nodes", [])
+                edges = topo.get("edges", [])
+                if nodes:
+                    prompt_parts.append(f"\n## 你负责的项目: {project.get('name', project_id)}")
+                    prompt_parts.append("### 服务拓扑")
+                    node_map = {}
+                    for n in nodes:
+                        node_map[n["id"]] = n.get("name", n["id"])
+                        prompt_parts.append(f"- [{n.get('type', 'service')}] {n.get('name', n['id'])}")
+                    if edges:
+                        prompt_parts.append("### 调用关系")
+                        for e in edges:
+                            src = node_map.get(e["from"], e["from"])
+                            dst = node_map.get(e["to"], e["to"])
+                            prompt_parts.append(f"- {src} → {dst} ({e.get('type', 'calls')})")
+            except Exception as e:
+                logger.error("Failed to load project topology: %s", e)
+
+    system_prompt = "\n\n".join(prompt_parts)
 
     async def event_stream():
         try:

@@ -1,21 +1,73 @@
 {
   "id": "proj-416685716",
   "name": "电商平台",
-  "description": "",
+  "description": "电商微服务架构，包含网关、用户、订单、支付、库存5个核心服务",
   "createdAt": "2026-02-09T17:52:18.588228",
   "topology": {
     "nodes": [
       {
-        "id": "node-1770630822868",
+        "id": "node-api-gateway",
         "type": "gateway",
-        "name": "new-gateway",
-        "position": {
-          "x": 525,
-          "y": 285
-        }
+        "name": "api-gateway",
+        "position": { "x": 450, "y": 100 }
+      },
+      {
+        "id": "node-user-service",
+        "type": "service",
+        "name": "user-service",
+        "position": { "x": 250, "y": 260 }
+      },
+      {
+        "id": "node-order-service",
+        "type": "service",
+        "name": "order-service",
+        "position": { "x": 650, "y": 260 }
+      },
+      {
+        "id": "node-payment-service",
+        "type": "service",
+        "name": "payment-service",
+        "position": { "x": 500, "y": 420 }
+      },
+      {
+        "id": "node-inventory-service",
+        "type": "service",
+        "name": "inventory-service",
+        "position": { "x": 800, "y": 420 }
       }
     ],
-    "edges": []
+    "edges": [
+      {
+        "id": "e-gw-user",
+        "from": "node-api-gateway",
+        "to": "node-user-service",
+        "type": "calls"
+      },
+      {
+        "id": "e-gw-order",
+        "from": "node-api-gateway",
+        "to": "node-order-service",
+        "type": "calls"
+      },
+      {
+        "id": "e-order-payment",
+        "from": "node-order-service",
+        "to": "node-payment-service",
+        "type": "calls"
+      },
+      {
+        "id": "e-order-inventory",
+        "from": "node-order-service",
+        "to": "node-inventory-service",
+        "type": "calls"
+      },
+      {
+        "id": "e-user-order",
+        "from": "node-user-service",
+        "to": "node-order-service",
+        "type": "calls"
+      }
+    ]
   },
-  "agents": []
+  "agents": ["agent-1770631265249"]
 }
