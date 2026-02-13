@@ -16,3 +16,4 @@ node_modules/
 
 # Chat history
 backend/chat_history/
+*.DS_Store

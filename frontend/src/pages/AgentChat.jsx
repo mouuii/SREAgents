@@ -158,6 +158,16 @@ export default function AgentChat() {
                                 }
                                 return updated
                             })
+                        } else if (parsed.type === 'tool_start') {
+                            setMessages(prev => {
+                                const updated = [...prev]
+                                const current = updated[assistantIdx]
+                                updated[assistantIdx] = {
+                                    ...current,
+                                    content: (current.content || '') + `\n\n> ⏳ 正在调用 **${parsed.name}** ...\n\n`
+                                }
+                                return updated
+                            })
                         } else if (parsed.type === 'error') {
                             toast.error(parsed.content)
                             setMessages(prev => {
@@ -218,7 +228,7 @@ export default function AgentChat() {
     return (
         <>
             <Header title={`对话 - ${agent.name}`} />
-            <div className="page-content" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
+            <div className="page-content" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
                 {/* Top Bar */}
                 <div className="flex items-center justify-between mb-md">
                     <button className="btn btn-ghost" onClick={() => navigate(`/agents/${id}`)}>

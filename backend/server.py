@@ -804,6 +804,10 @@ async def chat(request: ChatRequest):
     system_prompt = "\n\n".join(prompt_parts)
 
     async def event_stream():
+        # 跟踪 Skill 工具调用 ID，跳过其内部结果（Skill 只是加载技能定义）
+        skill_tool_ids = set()
+        streamed_text = False  # 是否已通过 delta 流式输出过文本
+
         try:
             async for message in query(
                 prompt=request.message,
@@ -813,35 +817,74 @@ async def chat(request: ChatRequest):
                     setting_sources=["project"],
                     allowed_tools=["Skill", "Read", "Bash", "Glob", "WebFetch"],
                     permission_mode="acceptEdits",
-                    max_turns=3,
+                    max_turns=10,
                     include_partial_messages=True
                 )
             ):
-                # 逐 token 流式输出
+                # 逐 token 流式输出（StreamEvent）
                 if StreamEvent and isinstance(message, StreamEvent):
                     event = message.event
                     event_type = event.get("type", "")
-                    logger.debug("StreamEvent type=%s keys=%s", event_type, list(event.keys()))
                     if event_type == "content_block_delta":
                         delta = event.get("delta", {})
                         if delta.get("type") == "text_delta":
                             text = delta.get("text", "")
                             if text:
+                                streamed_text = True
                                 data = json.dumps({"type": "delta", "content": text}, ensure_ascii=False)
                                 yield f"data: {data}\n\n"
-                # 完整消息（作为兜底）
-                elif hasattr(message, 'content'):
-                    logger.info("Full message: role=%s blocks=%d", getattr(message, 'role', '?'), len(message.content) if message.content else 0)
+                    elif event_type == "content_block_start":
+                        cb = event.get("content_block", {})
+                        if cb.get("type") == "tool_use":
+                            tool_name = cb.get("name", "")
+                            tool_id = cb.get("id", "")
+                            if tool_name == "Skill":
+                                skill_tool_ids.add(tool_id)
+                            else:
+                                data = json.dumps({"type": "tool_start", "name": tool_name}, ensure_ascii=False)
+                                yield f"data: {data}\n\n"
+
+                # 完整消息
+                elif hasattr(message, 'content') and message.content:
+                    # 检查消息中是否包含工具 block
+                    has_tool_block = any(
+                        hasattr(b, 'name') and hasattr(b, 'input')
+                        for b in message.content
+                    )
                     for block in message.content:
-                        if hasattr(block, 'text') and block.text:
-                            logger.info("Text block length=%d", len(block.text))
-                            data = json.dumps({"type": "text", "content": block.text}, ensure_ascii=False)
+                        if hasattr(block, 'text'):
+                            # 如果有工具 block，文本已通过 delta 输出，跳过
+                            # 如果无工具 block（纯文本回复），且未通过 delta 输出，则发送
+                            if has_tool_block or streamed_text:
+                                continue
+                            if block.text:
+                                data = json.dumps({"type": "text", "content": block.text}, ensure_ascii=False)
+                                yield f"data: {data}\n\n"
+                        elif hasattr(block, 'name') and hasattr(block, 'input'):
+                            # ToolUseBlock — 跳过 Skill（内部工具），只显示 Bash 等
+                            if block.name == "Skill":
+                                if hasattr(block, 'id'):
+                                    skill_tool_ids.add(block.id)
+                                continue
+                            tool_info = f"\n\n**🔧 {block.name}**"
+                            inp = block.input
+                            if isinstance(inp, dict) and inp.get("command"):
+                                tool_info += f"\n```bash\n{inp['command']}\n```"
+                            data = json.dumps({"type": "text", "content": tool_info}, ensure_ascii=False)
                             yield f"data: {data}\n\n"
-                        elif hasattr(block, 'name'):
-                            data = json.dumps({"type": "tool", "name": block.name}, ensure_ascii=False)
-                            yield f"data: {data}\n\n"
-                else:
-                    logger.info("Unknown message type: %s attrs=%s", type(message).__name__, [a for a in dir(message) if not a.startswith('_')])
+                        elif hasattr(block, 'tool_use_id') and hasattr(block, 'content'):
+                            # ToolResultBlock — 跳过 Skill 结果
+                            if block.tool_use_id in skill_tool_ids:
+                                continue
+                            result_content = block.content
+                            if isinstance(result_content, str) and result_content.strip():
+                                truncated = result_content[:2000]
+                                if len(result_content) > 2000:
+                                    truncated += "\n... (结果已截断)"
+                                result_text = f"\n\n📋 执行结果:\n```\n{truncated}\n```\n\n"
+                                data = json.dumps({"type": "text", "content": result_text}, ensure_ascii=False)
+                                yield f"data: {data}\n\n"
+
             yield "data: [DONE]\n\n"
         except Exception as e:
             logger.error("Chat stream error: %s", e)
