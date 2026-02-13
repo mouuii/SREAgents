@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, Network, Bot, Trash2, MessageSquare, Settings } from 'lucide-react'
+import { ArrowLeft, Plus, Network, Bot, Trash2, MessageSquare, Settings, Edit2, Check, X } from 'lucide-react'
 import Header from '../components/Layout/Header'
-import { useProjects, useProjectDispatch } from '../context/ProjectContext'
+import { useProjects, useProjectDispatch, projectsApi } from '../context/ProjectContext'
 import { useAgents, useAgentDispatch, agentsApi } from '../context/AgentContext'
 import { useToast } from '../context/ToastContext'
 
@@ -14,17 +14,48 @@ export default function ProjectDetail() {
     const { agents } = useAgents()
     const agentDispatch = useAgentDispatch()
     const toast = useToast()
-    
+
     const [activeTab, setActiveTab] = useState('agents')
-    
+    const [isEditing, setIsEditing] = useState(false)
+    const [editName, setEditName] = useState('')
+    const [editDescription, setEditDescription] = useState('')
+
     const project = projects.find(p => p.id === projectId)
     const projectAgents = agents.filter(a => a.projectId === projectId)
 
     useEffect(() => {
         if (project) {
             projectDispatch({ type: 'SET_CURRENT_PROJECT', payload: project })
+            setEditName(project.name)
+            setEditDescription(project.description || '')
         }
     }, [project, projectDispatch])
+
+    const handleStartEdit = () => {
+        setEditName(project.name)
+        setEditDescription(project.description || '')
+        setIsEditing(true)
+    }
+
+    const handleCancelEdit = () => {
+        setIsEditing(false)
+        setEditName(project.name)
+        setEditDescription(project.description || '')
+    }
+
+    const handleSaveEdit = async () => {
+        try {
+            const result = await projectsApi.update(projectId, {
+                name: editName,
+                description: editDescription
+            })
+            projectDispatch({ type: 'UPDATE_PROJECT', payload: result.project })
+            setIsEditing(false)
+            toast.success('项目信息已更新')
+        } catch (err) {
+            toast.error('更新失败: ' + err.message)
+        }
+    }
 
     const handleDeleteAgent = async (agent) => {
         if (!confirm(`确定删除智能体 "${agent.name}"？`)) return
@@ -49,7 +80,7 @@ export default function ProjectDetail() {
 
     return (
         <>
-            <Header title={project.name} />
+            <Header title={isEditing ? '编辑项目' : project.name} />
             <div className="project-detail">
                 {/* 顶部导航 */}
                 <div className="detail-header">
@@ -58,9 +89,58 @@ export default function ProjectDetail() {
                         返回项目列表
                     </button>
                     <div className="project-meta">
-                        <span className="project-desc">{project.description || '暂无描述'}</span>
+                        {isEditing ? (
+                            <div className="edit-actions">
+                                <button className="btn btn-ghost btn-sm" onClick={handleCancelEdit}>
+                                    <X size={16} />
+                                    取消
+                                </button>
+                                <button className="btn btn-primary btn-sm" onClick={handleSaveEdit}>
+                                    <Check size={16} />
+                                    保存
+                                </button>
+                            </div>
+                        ) : (
+                            <button className="btn btn-ghost btn-sm" onClick={handleStartEdit}>
+                                <Edit2 size={16} />
+                                编辑项目
+                            </button>
+                        )}
                     </div>
                 </div>
+
+                {/* 项目信息编辑区 */}
+                {isEditing && (
+                    <div className="edit-section">
+                        <div className="form-group">
+                            <label>项目名称</label>
+                            <input
+                                type="text"
+                                className="form-input"
+                                value={editName}
+                                onChange={(e) => setEditName(e.target.value)}
+                                placeholder="输入项目名称"
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label>项目描述</label>
+                            <textarea
+                                className="form-textarea"
+                                value={editDescription}
+                                onChange={(e) => setEditDescription(e.target.value)}
+                                placeholder="输入项目描述"
+                                rows={3}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                {/* 项目信息显示区 */}
+                {!isEditing && project.description && (
+                    <div className="info-section">
+                        <span className="project-desc">{project.description}</span>
+                    </div>
+                )}
 
                 {/* Tab 切换 */}
                 <div className="detail-tabs">
@@ -208,6 +288,55 @@ export default function ProjectDetail() {
                 .project-meta {
                     color: var(--text-secondary);
                     font-size: 0.875rem;
+                }
+                .edit-actions {
+                    display: flex;
+                    gap: var(--space-sm);
+                }
+                .edit-section {
+                    padding: var(--space-lg);
+                    background: var(--bg-secondary);
+                    border-bottom: 1px solid var(--border-color);
+                }
+                .info-section {
+                    padding: var(--space-md) var(--space-lg);
+                    background: var(--bg-secondary);
+                    border-bottom: 1px solid var(--border-color);
+                }
+                .project-desc {
+                    color: var(--text-secondary);
+                }
+                .form-group {
+                    margin-bottom: var(--space-md);
+                }
+                .form-group:last-child {
+                    margin-bottom: 0;
+                }
+                .form-group label {
+                    display: block;
+                    margin-bottom: var(--space-xs);
+                    font-size: 0.875rem;
+                    font-weight: 500;
+                    color: var(--text-secondary);
+                }
+                .form-input, .form-textarea {
+                    width: 100%;
+                    padding: var(--space-sm) var(--space-md);
+                    background: var(--bg-primary);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-md);
+                    color: var(--text-primary);
+                    font-size: 0.875rem;
+                    font-family: inherit;
+                    transition: all 0.2s;
+                }
+                .form-input:focus, .form-textarea:focus {
+                    outline: none;
+                    border-color: var(--primary);
+                }
+                .form-textarea {
+                    resize: vertical;
+                    min-height: 60px;
                 }
                 .detail-tabs {
                     display: flex;
