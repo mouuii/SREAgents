@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -746,56 +747,57 @@ async def clear_chat_history(agent_id: str):
     return {"success": True}
 
 
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/chat")
 async def chat(request: ChatRequest):
-    """处理智能体对话请求 - 使用 SDK 原生 Skills"""
-    
+    """处理智能体对话请求 - SSE 流式输出"""
+
     if not query:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="Claude Agent SDK not installed. Run: uv add claude-agent-sdk"
         )
-    
+
     if not os.getenv("ANTHROPIC_API_KEY"):
         raise HTTPException(
             status_code=500,
             detail="ANTHROPIC_API_KEY not configured in .env"
         )
-    
+
     # 获取 agent 的 system prompt
     system_prompt = request.systemPrompt or "你是一个智能运维助手。"
-    
-    full_response = []
-    tools_used = []
-    
-    try:
-        # Use Claude Agent SDK with native Skills support
-        async for message in query(
-            prompt=request.message,
-            options=ClaudeAgentOptions(
-                system_prompt=system_prompt,
-                cwd=str(Path(__file__).parent),  # backend 目录，包含 .claude/skills/
-                setting_sources=["project"],  # 从项目目录加载 Skills
-                allowed_tools=["Skill", "Read", "Bash", "Glob", "WebFetch"],  # 启用 Skill 工具
-                permission_mode="acceptEdits",
-                max_turns=3
-            )
-        ):
-            # Collect text responses
-            if hasattr(message, 'content'):
-                for block in message.content:
-                    if hasattr(block, 'text'):
-                        full_response.append(block.text)
-                    elif hasattr(block, 'name'):
-                        tools_used.append(block.name)
-        
-        return ChatResponse(
-            response="\n".join(full_response) if full_response else "任务已完成。",
-            toolsUsed=tools_used
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    async def event_stream():
+        try:
+            async for message in query(
+                prompt=request.message,
+                options=ClaudeAgentOptions(
+                    system_prompt=system_prompt,
+                    cwd=str(Path(__file__).parent),
+                    setting_sources=["project"],
+                    allowed_tools=["Skill", "Read", "Bash", "Glob", "WebFetch"],
+                    permission_mode="acceptEdits",
+                    max_turns=3
+                )
+            ):
+                if hasattr(message, 'content'):
+                    for block in message.content:
+                        if hasattr(block, 'text') and block.text:
+                            data = json.dumps({"type": "text", "content": block.text}, ensure_ascii=False)
+                            yield f"data: {data}\n\n"
+                        elif hasattr(block, 'name'):
+                            data = json.dumps({"type": "tool", "name": block.name}, ensure_ascii=False)
+                            yield f"data: {data}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            logger.error("Chat stream error: %s", e)
+            data = json.dumps({"type": "error", "content": str(e)}, ensure_ascii=False)
+            yield f"data: {data}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 @app.post("/api/skills/execute")

@@ -93,8 +93,11 @@ export default function AgentChat() {
         setMessages(prev => [...prev, { role: 'user', content: userMessage }])
         setIsLoading(true)
 
+        // 先添加一个空的 assistant 消息，后续流式追加内容
+        const assistantIdx = messages.length + 1 // +1 因为刚加了 user 消息
+        setMessages(prev => [...prev, { role: 'assistant', content: '' }])
+
         try {
-            // Call backend API with timeout
             const controller = new AbortController()
             const timeout = setTimeout(() => controller.abort(), 120000)
 
@@ -110,26 +113,85 @@ export default function AgentChat() {
             })
             clearTimeout(timeout)
 
-            if (response.ok) {
-                const data = await response.json()
-                setMessages(prev => [...prev, { role: 'assistant', content: data.response }])
-            } else {
+            if (!response.ok) {
                 const err = await response.json().catch(() => ({}))
-                toast.error(err.detail || '请求失败')
-                setMessages(prev => [...prev, {
-                    role: 'assistant',
-                    content: `请求失败: ${err.detail || response.statusText}`
-                }])
+                const errMsg = err.detail || response.statusText
+                toast.error(errMsg)
+                setMessages(prev => {
+                    const updated = [...prev]
+                    updated[assistantIdx] = { role: 'assistant', content: `请求失败: ${errMsg}` }
+                    return updated
+                })
+                setIsLoading(false)
+                return
             }
+
+            // 读取 SSE 流
+            const reader = response.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = ''
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split('\n')
+                buffer = lines.pop() || ''
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue
+                    const data = line.slice(6)
+                    if (data === '[DONE]') continue
+
+                    try {
+                        const parsed = JSON.parse(data)
+                        if (parsed.type === 'text') {
+                            setMessages(prev => {
+                                const updated = [...prev]
+                                const current = updated[assistantIdx]
+                                updated[assistantIdx] = {
+                                    ...current,
+                                    content: (current.content || '') + parsed.content
+                                }
+                                return updated
+                            })
+                        } else if (parsed.type === 'error') {
+                            toast.error(parsed.content)
+                            setMessages(prev => {
+                                const updated = [...prev]
+                                updated[assistantIdx] = {
+                                    role: 'assistant',
+                                    content: (prev[assistantIdx].content || '') + '\n\n错误: ' + parsed.content
+                                }
+                                return updated
+                            })
+                        }
+                    } catch {
+                        // 忽略解析错误
+                    }
+                }
+            }
+
+            // 如果流结束后消息仍为空，给个默认提示
+            setMessages(prev => {
+                const updated = [...prev]
+                if (!updated[assistantIdx].content) {
+                    updated[assistantIdx] = { role: 'assistant', content: '任务已完成。' }
+                }
+                return updated
+            })
+
         } catch (err) {
             const msg = err.name === 'AbortError'
                 ? '请求超时，Claude Agent 执行时间过长'
                 : '后端服务不可用，请确认服务已启动'
             toast.error(msg)
-            setMessages(prev => [...prev, {
-                role: 'assistant',
-                content: msg
-            }])
+            setMessages(prev => {
+                const updated = [...prev]
+                updated[assistantIdx] = { role: 'assistant', content: msg }
+                return updated
+            })
         }
 
         setIsLoading(false)
@@ -204,7 +266,7 @@ export default function AgentChat() {
                                 )}
                             </div>
                         ))}
-                        {isLoading && (
+                        {isLoading && messages[messages.length - 1]?.content === '' && (
                             <div className="chat-message assistant">
                                 <Loader size={16} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
                                 <span style={{ marginLeft: 8 }}>思考中...</span>
