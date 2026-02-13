@@ -778,7 +778,7 @@ async def chat(request: ChatRequest):
                 setting_sources=["project"],  # 从项目目录加载 Skills
                 allowed_tools=["Skill", "Read", "Bash", "Glob", "WebFetch"],  # 启用 Skill 工具
                 permission_mode="acceptEdits",
-                max_turns=10
+                max_turns=3
             )
         ):
             # Collect text responses

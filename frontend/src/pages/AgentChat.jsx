@@ -10,7 +10,7 @@ import { useToast } from '../context/ToastContext'
 export default function AgentChat() {
     const { id } = useParams()
     const navigate = useNavigate()
-    const { agents, skills } = useAgents()
+    const { agents } = useAgents()
 
     const agent = agents.find(a => a.id === id)
     const [messages, setMessages] = useState([])
@@ -94,7 +94,10 @@ export default function AgentChat() {
         setIsLoading(true)
 
         try {
-            // Call backend API
+            // Call backend API with timeout
+            const controller = new AbortController()
+            const timeout = setTimeout(() => controller.abort(), 120000)
+
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -102,40 +105,31 @@ export default function AgentChat() {
                     agentId: agent.id,
                     message: userMessage,
                     systemPrompt: agent.systemPrompt,
-                    skills: agent.skills.map(skillId => {
-                        const skill = skills.find(s => s.id === skillId)
-                        return skill ? { name: skill.name, instruction: skill.instruction } : null
-                    }).filter(Boolean)
-                })
+                }),
+                signal: controller.signal
             })
+            clearTimeout(timeout)
 
             if (response.ok) {
                 const data = await response.json()
                 setMessages(prev => [...prev, { role: 'assistant', content: data.response }])
             } else {
-                // Mock response for demo
-                setTimeout(() => {
-                    setMessages(prev => [...prev, {
-                        role: 'assistant',
-                        content: `[Demo] 收到你的消息: "${userMessage}"\n\n作为 ${agent?.name}，我会使用以下技能来帮助你：\n${agent?.skills.map(sId => {
-                            const s = skills.find(sk => sk.id === sId)
-                            return s ? `- ${s.name}: ${s.description}` : ''
-                        }).join('\n') || '暂无配置技能'}`
-                    }])
-                    setIsLoading(false)
-                }, 1000)
-                return
-            }
-        } catch {
-            // Mock response for demo when API is not available
-            setTimeout(() => {
+                const err = await response.json().catch(() => ({}))
+                toast.error(err.detail || '请求失败')
                 setMessages(prev => [...prev, {
                     role: 'assistant',
-                    content: `[Demo Mode] 后端 API 未配置。\n\n收到消息: "${userMessage}"\n\n要启用真实对话，请运行 Python 后端服务。`
+                    content: `请求失败: ${err.detail || response.statusText}`
                 }])
-                setIsLoading(false)
-            }, 500)
-            return
+            }
+        } catch (err) {
+            const msg = err.name === 'AbortError'
+                ? '请求超时，Claude Agent 执行时间过长'
+                : '后端服务不可用，请确认服务已启动'
+            toast.error(msg)
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: msg
+            }])
         }
 
         setIsLoading(false)
