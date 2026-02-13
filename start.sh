@@ -7,7 +7,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}🚀 启动 OpsAgent Platform${NC}"
+echo -e "${GREEN}🚀 启动 SREAgents${NC}"
 echo ""
 
 # 清理函数 - 退出时杀掉所有子进程

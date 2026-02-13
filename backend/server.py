@@ -1,5 +1,5 @@
 """
-OpsAgent Platform - Python Backend
+SREAgents - Python Backend
 使用 Claude Agent SDK 处理智能体对话和技能执行
 """
 import asyncio
@@ -23,7 +23,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
-logger = logging.getLogger("opsagent")
+logger = logging.getLogger("sreagents")
 
 # Load environment variables
 load_dotenv()
@@ -41,7 +41,7 @@ except ImportError:
 # Import storage manager
 from storage.manager import storage
 
-app = FastAPI(title="OpsAgent Platform API", version="1.0.0")
+app = FastAPI(title="SREAgents API", version="1.0.0")
 
 # CORS for frontend
 app.add_middleware(

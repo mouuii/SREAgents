@@ -1,4 +1,4 @@
-# OpsAgent Platform
+# SREAgents
 
 智能运维助手平台，基于 Claude Agent SDK 构建。用户可以创建和管理运维智能体（Agent），为其配置技能（Skill），并通过对话方式执行运维任务。
 

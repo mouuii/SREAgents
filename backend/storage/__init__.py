@@ -1,4 +1,4 @@
-"""Storage providers for OpsAgent Platform"""
+"""Storage providers for SREAgents"""
 
 from .base import StorageProvider
 from .local import LocalStorage
