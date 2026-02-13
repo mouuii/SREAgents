@@ -1,15 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Save, FileText, File, Plus, Trash2, FolderOpen } from 'lucide-react'
 import Editor from '@monaco-editor/react'
 import Header from '../components/Layout/Header'
 import { useAgents, useAgentDispatch, skillsApi } from '../context/AgentContext'
+import { useToast } from '../context/ToastContext'
 
 export default function SkillEdit() {
     const { id } = useParams()
     const navigate = useNavigate()
     const { skills } = useAgents()
     const dispatch = useAgentDispatch()
+    const toast = useToast()
 
     const isNew = id === 'new'
     const existingSkill = skills.find(s => s.id === id)
@@ -48,38 +50,14 @@ export default function SkillEdit() {
     const [showNewFileModal, setShowNewFileModal] = useState(false)
     const [newFileName, setNewFileName] = useState('')
 
-    // 加载文件列表
-    useEffect(() => {
-        if (!isNew && id) {
-            loadFiles()
-        }
-    }, [id, isNew])
-
-    const loadFiles = async () => {
-        try {
-            const res = await fetch(`/api/skills/${id}/files`)
-            if (res.ok) {
-                const data = await res.json()
-                setFiles(data.files)
-                // 默认选中 SKILL.md
-                const skillMd = data.files.find(f => f.isSkillMd)
-                if (skillMd) {
-                    loadFileContent(skillMd.path, true)
-                }
-            }
-        } catch (err) {
-            console.error('Failed to load files:', err)
-        }
-    }
-
-    const loadFileContent = async (path, isSkillMd = false) => {
+    const loadFileContent = useCallback(async (path, isSkillMd = false) => {
         try {
             const res = await fetch(`/api/skills/${id}/files/${encodeURIComponent(path)}`)
             if (res.ok) {
                 const data = await res.json()
                 setActiveFile({ path, isSkillMd })
                 setFileContent(data.content)
-                
+
                 // 如果是 SKILL.md，同步到 skill.instruction
                 if (isSkillMd) {
                     // 解析 frontmatter
@@ -95,13 +73,37 @@ export default function SkillEdit() {
                 }
             }
         } catch (err) {
-            console.error('Failed to load file:', err)
+            toast.error('加载文件失败: ' + err.message)
         }
-    }
+    }, [id, toast])
+
+    // 加载文件列表
+    const loadFiles = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/skills/${id}/files`)
+            if (res.ok) {
+                const data = await res.json()
+                setFiles(data.files)
+                // 默认选中 SKILL.md
+                const skillMd = data.files.find(f => f.isSkillMd)
+                if (skillMd) {
+                    loadFileContent(skillMd.path, true)
+                }
+            }
+        } catch {
+            toast.error('加载文件列表失败')
+        }
+    }, [id, loadFileContent, toast])
+
+    useEffect(() => {
+        if (!isNew && id) {
+            loadFiles()
+        }
+    }, [id, isNew, loadFiles])
 
     const saveCurrentFile = async () => {
         if (!activeFile) return
-        
+
         try {
             await fetch(`/api/skills/${id}/files/${encodeURIComponent(activeFile.path)}`, {
                 method: 'PUT',
@@ -109,7 +111,7 @@ export default function SkillEdit() {
                 body: JSON.stringify({ content: fileContent })
             })
         } catch (err) {
-            console.error('Failed to save file:', err)
+            toast.error('保存文件失败: ' + err.message)
             throw err
         }
     }
@@ -133,10 +135,10 @@ export default function SkillEdit() {
                 await skillsApi.update(id, skillToSave)
                 dispatch({ type: 'UPDATE_SKILL', payload: skillToSave })
             }
+            toast.success('技能保存成功')
             navigate('/skills')
         } catch (err) {
-            console.error('Failed to save skill:', err)
-            alert('保存失败: ' + err.message)
+            toast.error('保存失败: ' + err.message)
         } finally {
             setSaving(false)
         }
@@ -144,14 +146,14 @@ export default function SkillEdit() {
 
     const handleCreateFile = async () => {
         if (!newFileName.trim()) return
-        
+
         try {
             const res = await fetch(`/api/skills/${id}/files?file_path=${encodeURIComponent(newFileName)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content: '' })
             })
-            
+
             if (res.ok) {
                 setShowNewFileModal(false)
                 setNewFileName('')
@@ -159,21 +161,21 @@ export default function SkillEdit() {
                 loadFileContent(newFileName)
             } else {
                 const data = await res.json()
-                alert(data.detail || '创建失败')
+                toast.error(data.detail || '创建失败')
             }
         } catch (err) {
-            alert('创建失败: ' + err.message)
+            toast.error('创建失败: ' + err.message)
         }
     }
 
     const handleDeleteFile = async (path) => {
         if (!confirm(`确定要删除 ${path} 吗？`)) return
-        
+
         try {
             const res = await fetch(`/api/skills/${id}/files/${encodeURIComponent(path)}`, {
                 method: 'DELETE'
             })
-            
+
             if (res.ok) {
                 await loadFiles()
                 if (activeFile?.path === path) {
@@ -182,10 +184,10 @@ export default function SkillEdit() {
                 }
             } else {
                 const data = await res.json()
-                alert(data.detail || '删除失败')
+                toast.error(data.detail || '删除失败')
             }
         } catch (err) {
-            alert('删除失败: ' + err.message)
+            toast.error('删除失败: ' + err.message)
         }
     }
 

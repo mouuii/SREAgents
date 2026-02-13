@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Network, Bot, Trash2, MessageSquare, Settings } from 'lucide-react'
 import Header from '../components/Layout/Header'
-import { useProjects, useProjectDispatch, projectsApi } from '../context/ProjectContext'
+import { useProjects, useProjectDispatch } from '../context/ProjectContext'
 import { useAgents, useAgentDispatch, agentsApi } from '../context/AgentContext'
+import { useToast } from '../context/ToastContext'
 
 export default function ProjectDetail() {
     const { projectId } = useParams()
@@ -12,6 +13,7 @@ export default function ProjectDetail() {
     const projectDispatch = useProjectDispatch()
     const { agents } = useAgents()
     const agentDispatch = useAgentDispatch()
+    const toast = useToast()
     
     const [activeTab, setActiveTab] = useState('agents')
     
@@ -30,7 +32,7 @@ export default function ProjectDetail() {
             await agentsApi.delete(agent.id)
             agentDispatch({ type: 'DELETE_AGENT', payload: agent.id })
         } catch (err) {
-            console.error('Failed to delete agent:', err)
+            toast.error('删除智能体失败: ' + err.message)
         }
     }
 

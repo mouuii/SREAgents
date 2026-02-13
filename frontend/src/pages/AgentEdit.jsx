@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Save, Play, FileText, Settings as SettingsIcon } from 'lucide-react'
 import Header from '../components/Layout/Header'
@@ -42,12 +42,6 @@ export default function AgentEdit() {
     })
 
     const [showSkillModal, setShowSkillModal] = useState(false)
-
-    useEffect(() => {
-        if (!isNew && existingAgent) {
-            setAgent(existingAgent)
-        }
-    }, [isNew, existingAgent])
 
     if (!agent) {
         return (
